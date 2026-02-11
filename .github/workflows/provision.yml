@@ -1,0 +1,157 @@
+name: Provision Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      template:
+        description: "Infrastructure template"
+        required: true
+        type: choice
+        options:
+          - api-service
+          - api-database
+          - scheduled-worker
+      environment_name:
+        description: "Unique environment name (e.g. my-app-staging)"
+        required: true
+        type: string
+      owner:
+        description: "Owner email"
+        required: true
+        type: string
+      ttl:
+        description: "Time-to-live (e.g. 7d, 24h)"
+        required: false
+        type: string
+        default: "7d"
+      schedule_expression:
+        description: "Schedule expression (scheduled-worker only)"
+        required: false
+        type: string
+        default: ""
+      s3_bucket_arn:
+        description: "S3 bucket ARN (scheduled-worker only)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  STATE_BUCKET: mini-idp-terraform-state
+  AWS_REGION: us-east-1
+
+jobs:
+  provision:
+    name: Provision ${{ inputs.template }} / ${{ inputs.environment_name }}
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+
+      - name: Compute timestamps and generate tfvars
+        id: tfvars
+        run: |
+          set -euo pipefail
+
+          CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          TTL_RAW="${{ inputs.ttl }}"
+          if [[ "$TTL_RAW" =~ ^([0-9]+)d$ ]]; then
+            TTL_SECONDS=$(( ${BASH_REMATCH[1]} * 86400 ))
+          elif [[ "$TTL_RAW" =~ ^([0-9]+)h$ ]]; then
+            TTL_SECONDS=$(( ${BASH_REMATCH[1]} * 3600 ))
+          else
+            echo "::error::Invalid TTL format. Use <number>d or <number>h."
+            exit 1
+          fi
+
+          EXPIRES_AT=$(date -u -d "${CREATED_AT} + ${TTL_SECONDS} seconds" +"%Y-%m-%dT%H:%M:%SZ")
+
+          mkdir -p infrastructure/environments
+          TFVARS_FILE="infrastructure/environments/${{ inputs.environment_name }}.tfvars"
+
+          # Base variables (all templates)
+          cat > "${TFVARS_FILE}" <<TFEOF
+          environment_name = "${{ inputs.environment_name }}"
+          owner            = "${{ inputs.owner }}"
+          ttl              = "${{ inputs.ttl }}"
+          created_at       = "${CREATED_AT}"
+          expires_at       = "${EXPIRES_AT}"
+          TFEOF
+
+          # Template-specific variables
+          if [[ "${{ inputs.template }}" == "scheduled-worker" ]]; then
+            cat >> "${TFVARS_FILE}" <<TFEOF
+          schedule_expression = "${{ inputs.schedule_expression }}"
+          s3_bucket_arn       = "${{ inputs.s3_bucket_arn }}"
+          TFEOF
+          fi
+
+          # Remove leading whitespace from heredoc indentation
+          sed -i 's/^          //' "${TFVARS_FILE}"
+
+          echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
+          echo "created_at=${CREATED_AT}" >> "$GITHUB_OUTPUT"
+          echo "expires_at=${EXPIRES_AT}" >> "$GITHUB_OUTPUT"
+
+      - name: Tofu init
+        working-directory: infrastructure/templates/${{ inputs.template }}
+        run: |
+          tofu init -input=false \
+            -backend-config="key=environments/${{ inputs.environment_name }}/terraform.tfstate"
+
+      - name: Tofu plan
+        working-directory: infrastructure/templates/${{ inputs.template }}
+        run: |
+          tofu plan \
+            -var-file="${{ github.workspace }}/${{ steps.tfvars.outputs.tfvars_file }}" \
+            -out=tfplan \
+            -input=false
+
+      - name: Tofu apply
+        working-directory: infrastructure/templates/${{ inputs.template }}
+        run: tofu apply -input=false tfplan
+
+      - name: Upload outputs to S3
+        working-directory: infrastructure/templates/${{ inputs.template }}
+        run: |
+          set -euo pipefail
+          tofu output -json > outputs.json
+          aws s3 cp outputs.json \
+            "s3://${STATE_BUCKET}/environments/${{ inputs.environment_name }}/outputs.json" \
+            --content-type "application/json"
+
+      - name: Upload metadata to S3
+        run: |
+          set -euo pipefail
+          cat > metadata.json <<EOF
+          {
+            "name": "${{ inputs.environment_name }}",
+            "template": "${{ inputs.template }}",
+            "owner": "${{ inputs.owner }}",
+            "ttl": "${{ inputs.ttl }}",
+            "created_at": "${{ steps.tfvars.outputs.created_at }}",
+            "expires_at": "${{ steps.tfvars.outputs.expires_at }}",
+            "status": "active"
+          }
+          EOF
+          sed -i 's/^          //' metadata.json
+          aws s3 cp metadata.json \
+            "s3://${STATE_BUCKET}/environments/${{ inputs.environment_name }}/metadata.json" \
+            --content-type "application/json"

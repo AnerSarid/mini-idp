@@ -1,0 +1,31 @@
+{
+  "name": "@mini-idp/cli",
+  "version": "1.0.0",
+  "description": "Mini IDP CLI - Self-service infrastructure provisioning",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "idp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "@octokit/rest": "^21.0.0",
+    "@aws-sdk/client-s3": "^3.500.0",
+    "chalk": "^5.3.0",
+    "ora": "^8.0.0",
+    "conf": "^13.0.0",
+    "dayjs": "^1.11.10"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "eslint": "^8.56.0"
+  }
+}

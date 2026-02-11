@@ -1,0 +1,111 @@
+name: Destroy Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment_name:
+        description: "Name of the environment to destroy"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  STATE_BUCKET: mini-idp-terraform-state
+  AWS_REGION: us-east-1
+
+jobs:
+  destroy:
+    name: Destroy - ${{ inputs.environment_name }}
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+
+      - name: Read environment metadata from S3
+        id: metadata
+        run: |
+          set -euo pipefail
+          METADATA_KEY="environments/${{ inputs.environment_name }}/metadata.json"
+
+          if ! aws s3 cp "s3://${STATE_BUCKET}/${METADATA_KEY}" metadata.json; then
+            echo "::error::Metadata not found for '${{ inputs.environment_name }}'."
+            exit 1
+          fi
+
+          TEMPLATE=$(jq -r '.template' metadata.json)
+          if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
+            echo "::error::Could not determine template from metadata."
+            exit 1
+          fi
+
+          echo "template=${TEMPLATE}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare tfvars for destroy
+        id: tfvars
+        run: |
+          set -euo pipefail
+          TEMPLATE="${{ steps.metadata.outputs.template }}"
+          TFVARS_FILE="infrastructure/environments/${{ inputs.environment_name }}.tfvars"
+
+          # If the tfvars doesn't exist in the repo, generate one from metadata
+          if [[ ! -f "$TFVARS_FILE" ]]; then
+            echo "Generating fallback tfvars from metadata..."
+            OWNER=$(jq -r '.owner // "unknown"' metadata.json)
+            TTL=$(jq -r '.ttl // "7d"' metadata.json)
+            CREATED_AT=$(jq -r '.created_at // "2000-01-01T00:00:00Z"' metadata.json)
+            EXPIRES_AT=$(jq -r '.expires_at // "2000-01-01T00:00:00Z"' metadata.json)
+
+            cat > "${TFVARS_FILE}" <<EOF
+          environment_name = "${{ inputs.environment_name }}"
+          owner            = "${OWNER}"
+          ttl              = "${TTL}"
+          created_at       = "${CREATED_AT}"
+          expires_at       = "${EXPIRES_AT}"
+          EOF
+
+            if [[ "$TEMPLATE" == "scheduled-worker" ]]; then
+              cat >> "${TFVARS_FILE}" <<EOF
+          schedule_expression = "rate(1 hour)"
+          s3_bucket_arn       = ""
+          EOF
+            fi
+
+            sed -i 's/^          //' "${TFVARS_FILE}"
+          fi
+
+          echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Tofu init
+        working-directory: infrastructure/templates/${{ steps.metadata.outputs.template }}
+        run: |
+          tofu init -input=false \
+            -backend-config="key=environments/${{ inputs.environment_name }}/terraform.tfstate"
+
+      - name: Tofu destroy
+        working-directory: infrastructure/templates/${{ steps.metadata.outputs.template }}
+        run: |
+          tofu destroy \
+            -var-file="${{ github.workspace }}/${{ steps.tfvars.outputs.tfvars_file }}" \
+            -auto-approve \
+            -input=false
+
+      - name: Clean up S3 artifacts
+        run: |
+          set -euo pipefail
+          aws s3 rm "s3://${STATE_BUCKET}/environments/${{ inputs.environment_name }}/" --recursive

@@ -1,0 +1,215 @@
+# ttl-cleanup.yml - Automated daily cleanup of expired environments
+#
+# Runs on a cron schedule (daily at 6 AM UTC) and can also be triggered
+# manually. Lists all environments in S3, checks each one's expires-at
+# timestamp, and triggers the destroy workflow for any that have expired.
+
+name: TTL Cleanup
+
+on:
+  schedule:
+    # Run daily at 6:00 AM UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    # Allow manual trigger for on-demand cleanup
+
+permissions:
+  id-token: write
+  contents: read
+  actions: write  # Required to trigger the destroy workflow
+
+env:
+  STATE_BUCKET: mini-idp-terraform-state
+  AWS_REGION: us-east-1
+
+jobs:
+  cleanup:
+    name: TTL Cleanup Sweep
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      # -----------------------------------------------------------------
+      # 1. Checkout repository
+      # -----------------------------------------------------------------
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------
+      # 2. Authenticate to AWS via OIDC
+      # -----------------------------------------------------------------
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # -----------------------------------------------------------------
+      # 3. Install OpenTofu (needed if inline destroy is used)
+      # -----------------------------------------------------------------
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+
+      # -----------------------------------------------------------------
+      # 4. Scan all environments and destroy expired ones
+      # -----------------------------------------------------------------
+      - name: Scan and clean up expired environments
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          NOW_EPOCH=$(date -u +%s)
+          NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          echo "============================================="
+          echo "TTL Cleanup Sweep"
+          echo "Current time: ${NOW_ISO}"
+          echo "============================================="
+          echo ""
+
+          # -----------------------------------------------------------
+          # List all environment prefixes in S3
+          # Each environment lives under environments/<name>/
+          # -----------------------------------------------------------
+          echo "Listing environments in s3://${STATE_BUCKET}/environments/..."
+
+          ENVS=$(aws s3api list-objects-v2 \
+            --bucket "${STATE_BUCKET}" \
+            --prefix "environments/" \
+            --delimiter "/" \
+            --query "CommonPrefixes[].Prefix" \
+            --output text 2>/dev/null || echo "")
+
+          if [[ -z "$ENVS" || "$ENVS" == "None" ]]; then
+            echo "::notice::No environments found in S3. Nothing to clean up."
+            exit 0
+          fi
+
+          EXPIRED_COUNT=0
+          ACTIVE_COUNT=0
+          ERROR_COUNT=0
+          EXPIRED_NAMES=""
+
+          # -----------------------------------------------------------
+          # Check each environment's metadata for expiry
+          # -----------------------------------------------------------
+          for ENV_PREFIX in $ENVS; do
+            # Extract environment name from prefix (environments/<name>/ -> <name>)
+            ENV_NAME=$(echo "$ENV_PREFIX" | sed 's|environments/||' | sed 's|/||')
+
+            if [[ -z "$ENV_NAME" ]]; then
+              continue
+            fi
+
+            echo "---------------------------------------------"
+            echo "Checking environment: ${ENV_NAME}"
+
+            # Download metadata
+            METADATA_FILE="/tmp/metadata-${ENV_NAME}.json"
+            if ! aws s3 cp "s3://${STATE_BUCKET}/${ENV_PREFIX}metadata.json" "${METADATA_FILE}" 2>/dev/null; then
+              echo "::warning::Could not read metadata for '${ENV_NAME}'. Skipping."
+              ERROR_COUNT=$((ERROR_COUNT + 1))
+              continue
+            fi
+
+            # Read expiry and status
+            EXPIRES_AT=$(jq -r '.expires_at // empty' "${METADATA_FILE}")
+            STATUS=$(jq -r '.status // "unknown"' "${METADATA_FILE}")
+            OWNER=$(jq -r '.owner // "unknown"' "${METADATA_FILE}")
+            TEMPLATE=$(jq -r '.template // "unknown"' "${METADATA_FILE}")
+
+            if [[ -z "$EXPIRES_AT" ]]; then
+              echo "::warning::No expires_at in metadata for '${ENV_NAME}'. Skipping."
+              ERROR_COUNT=$((ERROR_COUNT + 1))
+              continue
+            fi
+
+            # Skip environments already being destroyed or inactive
+            if [[ "$STATUS" == "destroying" || "$STATUS" == "destroyed" ]]; then
+              echo "  Status is '${STATUS}', skipping."
+              continue
+            fi
+
+            # Compare timestamps
+            EXPIRES_EPOCH=$(date -u -d "${EXPIRES_AT}" +%s 2>/dev/null || echo "0")
+
+            if [[ "$EXPIRES_EPOCH" -eq 0 ]]; then
+              echo "::warning::Invalid expires_at '${EXPIRES_AT}' for '${ENV_NAME}'. Skipping."
+              ERROR_COUNT=$((ERROR_COUNT + 1))
+              continue
+            fi
+
+            REMAINING_SECONDS=$((EXPIRES_EPOCH - NOW_EPOCH))
+
+            if [[ "$REMAINING_SECONDS" -le 0 ]]; then
+              # ---------------------------------------------------
+              # Environment has expired -- trigger destroy workflow
+              # ---------------------------------------------------
+              HOURS_OVERDUE=$(( (-REMAINING_SECONDS) / 3600 ))
+              echo "  EXPIRED (overdue by ~${HOURS_OVERDUE}h)"
+              echo "    Owner: ${OWNER}"
+              echo "    Template: ${TEMPLATE}"
+              echo "    Expired at: ${EXPIRES_AT}"
+
+              # Mark as destroying in S3 to prevent duplicate cleanup
+              jq '.status = "destroying"' "${METADATA_FILE}" > /tmp/updated-metadata.json
+              aws s3 cp /tmp/updated-metadata.json \
+                "s3://${STATE_BUCKET}/${ENV_PREFIX}metadata.json" \
+                --content-type "application/json" 2>/dev/null || true
+
+              # Trigger the destroy workflow
+              echo "  Triggering destroy workflow for '${ENV_NAME}'..."
+              if gh workflow run destroy.yml \
+                --field "environment_name=${ENV_NAME}" \
+                --repo "${{ github.repository }}"; then
+                echo "  Destroy workflow triggered successfully."
+                EXPIRED_COUNT=$((EXPIRED_COUNT + 1))
+                EXPIRED_NAMES="${EXPIRED_NAMES}\n  - ${ENV_NAME} (owner: ${OWNER}, template: ${TEMPLATE}, overdue: ~${HOURS_OVERDUE}h)"
+              else
+                echo "::error::Failed to trigger destroy workflow for '${ENV_NAME}'"
+                ERROR_COUNT=$((ERROR_COUNT + 1))
+                # Revert status back to active
+                jq '.status = "active"' "${METADATA_FILE}" > /tmp/reverted-metadata.json
+                aws s3 cp /tmp/reverted-metadata.json \
+                  "s3://${STATE_BUCKET}/${ENV_PREFIX}metadata.json" \
+                  --content-type "application/json" 2>/dev/null || true
+              fi
+            else
+              # Environment is still within its TTL
+              HOURS_REMAINING=$((REMAINING_SECONDS / 3600))
+              echo "  Active (${HOURS_REMAINING}h remaining until ${EXPIRES_AT})"
+              ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
+            fi
+
+            # Clean up temp file
+            rm -f "${METADATA_FILE}"
+          done
+
+          # -----------------------------------------------------------
+          # Summary
+          # -----------------------------------------------------------
+          echo ""
+          echo "============================================="
+          echo "TTL Cleanup Summary"
+          echo "============================================="
+          echo "Active environments:  ${ACTIVE_COUNT}"
+          echo "Expired (destroyed):  ${EXPIRED_COUNT}"
+          echo "Errors/skipped:       ${ERROR_COUNT}"
+
+          if [[ "$EXPIRED_COUNT" -gt 0 ]]; then
+            echo ""
+            echo "Expired environments cleaned up:"
+            echo -e "${EXPIRED_NAMES}"
+            echo ""
+            echo "::notice::Cleaned up ${EXPIRED_COUNT} expired environment(s)"
+          else
+            echo ""
+            echo "::notice::No expired environments found"
+          fi
+
+          if [[ "$ERROR_COUNT" -gt 0 ]]; then
+            echo "::warning::${ERROR_COUNT} environment(s) had errors during cleanup check"
+          fi

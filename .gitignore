@@ -1,0 +1,23 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+crash.log
+
+# Generated environments
+infrastructure/environments/*.tfvars
+
+# Node
+cli/node_modules/
+cli/dist/
+cli/.eslintcache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

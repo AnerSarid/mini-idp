@@ -108,8 +108,9 @@ resource "aws_cloudwatch_log_group" "this" {
 ################################################################################
 
 resource "aws_secretsmanager_secret" "this" {
-  name        = "${local.prefix}/app-secrets"
-  description = "Application secrets for the ${local.prefix} environment."
+  name                    = "${local.prefix}/app-secrets"
+  description             = "Application secrets for the ${local.prefix} environment."
+  recovery_window_in_days = 0 # Ephemeral environments — skip 30-day recovery to allow re-creation
 
   tags = var.tags
 }

@@ -6,7 +6,7 @@ data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
 locals {
-  prefix = var.environment_name
+  prefix = "idp-${var.environment_name}"
 }
 
 ################################################################################

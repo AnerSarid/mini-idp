@@ -26,6 +26,13 @@ permissions:
   pull-requests: write
   actions: write
 
+# Prevent duplicate destroy runs when both pull_request[closed] and delete
+# fire for the same branch. The second run is cancelled instead of failing
+# with a Terraform state lock conflict.
+concurrency:
+  group: preview-${{ github.event.pull_request.head.ref || github.event.ref || github.ref_name }}
+  cancel-in-progress: true
+
 env:
   STATE_BUCKET: mini-idp-terraform-state
   AWS_REGION: us-east-1

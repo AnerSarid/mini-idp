@@ -42,6 +42,12 @@ variable "container_port" {
   default     = 80
 }
 
+variable "acm_certificate_arn" {
+  description = "ARN of an ACM certificate for HTTPS. Leave empty for HTTP-only."
+  type        = string
+  default     = ""
+}
+
 variable "db_name" {
   description = "PostgreSQL database name"
   type        = string

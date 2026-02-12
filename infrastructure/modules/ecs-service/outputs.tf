@@ -27,3 +27,8 @@ output "task_definition_arn" {
   description = "ARN of the ECS task definition"
   value       = aws_ecs_task_definition.this.arn
 }
+
+output "endpoint" {
+  description = "Full endpoint URL (HTTPS if certificate provided, HTTP otherwise)"
+  value       = var.acm_certificate_arn != "" ? "https://${aws_lb.this.dns_name}" : "http://${aws_lb.this.dns_name}"
+}

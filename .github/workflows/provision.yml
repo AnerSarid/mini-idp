@@ -35,6 +35,36 @@ on:
         type: string
         default: ""
 
+  workflow_call:
+    inputs:
+      template:
+        description: "Infrastructure template"
+        required: true
+        type: string
+      environment_name:
+        description: "Unique environment name"
+        required: true
+        type: string
+      owner:
+        description: "Owner email"
+        required: true
+        type: string
+      ttl:
+        description: "Time-to-live (e.g. 7d, 24h)"
+        required: false
+        type: string
+        default: "7d"
+      schedule_expression:
+        description: "Schedule expression (scheduled-worker only)"
+        required: false
+        type: string
+        default: ""
+      s3_bucket_arn:
+        description: "S3 bucket ARN (scheduled-worker only)"
+        required: false
+        type: string
+        default: ""
+
 permissions:
   id-token: write
   contents: read

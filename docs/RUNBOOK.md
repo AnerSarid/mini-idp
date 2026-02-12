@@ -39,16 +39,9 @@ Create `github-actions-role` with this trust policy (replace `YOUR_ORG/mini-idp`
 }
 ```
 
-Attach these managed policies (or create a custom one scoped to IDP resources):
-- `AmazonECS_FullAccess`
-- `AmazonRDSFullAccess`
-- `AmazonVPCFullAccess`
-- `AmazonS3FullAccess`
-- `SecretsManagerReadWrite`
-- `CloudWatchLogsFullAccess`
-- `IAMFullAccess` (scoped to `idp-*` roles)
-- `ElasticLoadBalancingFullAccess`
-- `AmazonEventBridgeFullAccess`
+Attach the scoped custom policy from `infrastructure/idp-permissions.json`. This policy limits access to `idp-*` prefixed resources only.
+
+> **Security note:** Do not use AWS-managed full-access policies (e.g. `AmazonECS_FullAccess`, `AmazonRDSFullAccess`). A compromised GitHub Actions token combined with broad IAM permissions could lead to full AWS account takeover. The scoped policy is the only supported approach.
 
 ### 3. Set GitHub Secrets
 

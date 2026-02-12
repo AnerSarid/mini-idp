@@ -8,8 +8,8 @@ name: TTL Cleanup
 
 on:
   schedule:
-    # Run daily at 6:00 AM UTC
-    - cron: "0 6 * * *"
+    # Run every 4 hours to limit cost overrun from expired environments
+    - cron: "0 */4 * * *"
   workflow_dispatch:
     # Allow manual trigger for on-demand cleanup
 
@@ -127,10 +127,28 @@ jobs:
               continue
             fi
 
-            # Skip environments already being destroyed or inactive
-            if [[ "$STATUS" == "destroying" || "$STATUS" == "destroyed" ]]; then
-              echo "  Status is '${STATUS}', skipping."
+            # Skip fully destroyed environments
+            if [[ "$STATUS" == "destroyed" ]]; then
+              echo "  Status is 'destroyed', skipping."
               continue
+            fi
+
+            # For environments stuck in "destroying" for >2 hours, retry the destroy
+            if [[ "$STATUS" == "destroying" ]]; then
+              DESTROYING_SINCE=$(jq -r '.destroying_since // empty' "${METADATA_FILE}")
+              if [[ -n "$DESTROYING_SINCE" ]]; then
+                DESTROYING_EPOCH=$(date -u -d "${DESTROYING_SINCE}" +%s 2>/dev/null || echo "0")
+                STUCK_SECONDS=$((NOW_EPOCH - DESTROYING_EPOCH))
+                if [[ "$STUCK_SECONDS" -gt 7200 ]]; then
+                  STUCK_HOURS=$((STUCK_SECONDS / 3600))
+                  echo "  WARNING: stuck in 'destroying' for ~${STUCK_HOURS}h, retrying destroy..."
+                else
+                  echo "  Status is 'destroying' (recent), skipping."
+                  continue
+                fi
+              else
+                echo "  Status is 'destroying' (no timestamp), retrying destroy..."
+              fi
             fi
 
             # Compare timestamps
@@ -154,8 +172,8 @@ jobs:
               echo "    Template: ${TEMPLATE}"
               echo "    Expired at: ${EXPIRES_AT}"
 
-              # Mark as destroying in S3 to prevent duplicate cleanup
-              jq '.status = "destroying"' "${METADATA_FILE}" > /tmp/updated-metadata.json
+              # Mark as destroying in S3 (with timestamp) to prevent duplicate cleanup
+              jq --arg ts "${NOW_ISO}" '.status = "destroying" | .destroying_since = $ts' "${METADATA_FILE}" > /tmp/updated-metadata.json
               aws s3 cp /tmp/updated-metadata.json \
                 "s3://${STATE_BUCKET}/${ENV_PREFIX}metadata.json" \
                 --content-type "application/json" 2>/dev/null || true

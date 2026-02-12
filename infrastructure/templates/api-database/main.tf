@@ -68,6 +68,7 @@ module "ecs_service" {
   log_group_name         = module.common.log_group_name
   container_image        = var.container_image
   container_port         = var.container_port
+  acm_certificate_arn    = var.acm_certificate_arn
   aws_region             = var.aws_region
   tags                   = local.tags
 }

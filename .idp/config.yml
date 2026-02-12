@@ -1,0 +1,24 @@
+# Mini IDP — Preview Environment Configuration
+#
+# This file configures automatic preview environment provisioning.
+# When a branch is pushed, the preview-env workflow reads this file
+# to determine what infrastructure to create.
+#
+# If this file is missing, defaults are used:
+#   template: api-service, image: nginx:alpine, port: 80, ttl: 7d
+
+# Required: infrastructure template
+# Options: api-service | api-database | scheduled-worker
+template: api-service
+
+# Container configuration (api-service and api-database templates)
+container_image: nginx:alpine
+container_port: 80
+
+# Time-to-live for preview environments.
+# Extended automatically on every push to the branch.
+ttl: 7d
+
+# Scheduled task configuration (scheduled-worker template only)
+# schedule_expression: "rate(1 hour)"
+# s3_bucket_arn: "arn:aws:s3:::my-bucket"

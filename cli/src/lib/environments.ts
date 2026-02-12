@@ -21,6 +21,22 @@ export interface EnvironmentOutputs {
   [key: string]: string;
 }
 
+/**
+ * Terraform's `-json` output format nests each output as `{ value, type, sensitive }`.
+ * Flatten it to a simple `{ key: value }` map so the rest of the CLI can use it directly.
+ */
+function flattenTerraformOutputs(raw: Record<string, unknown>): EnvironmentOutputs {
+  const flat: EnvironmentOutputs = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (val != null && typeof val === 'object' && 'value' in (val as Record<string, unknown>)) {
+      flat[key] = String((val as Record<string, unknown>).value);
+    } else {
+      flat[key] = String(val);
+    }
+  }
+  return flat;
+}
+
 function getS3Client(): S3Client {
   return new S3Client({ region: getConfigValue('aws.region') });
 }
@@ -95,7 +111,7 @@ export async function getEnvironment(
     const outputsBody = await streamToString(
       outputsResult.Body as NodeJS.ReadableStream
     );
-    outputs = JSON.parse(outputsBody) as EnvironmentOutputs;
+    outputs = flattenTerraformOutputs(JSON.parse(outputsBody));
   } catch {
     // Outputs may not exist yet
   }
@@ -116,7 +132,7 @@ export async function getEnvironmentOutputs(
     });
     const result = await client.send(command);
     const body = await streamToString(result.Body as NodeJS.ReadableStream);
-    return JSON.parse(body) as EnvironmentOutputs;
+    return flattenTerraformOutputs(JSON.parse(body));
   } catch {
     return null;
   }

@@ -1,0 +1,368 @@
+# preview-env.yml - GitOps Preview Environments
+#
+# Automatically provisions an ephemeral preview environment for every
+# non-main branch push, and destroys it when the branch is merged or deleted.
+#
+# Configuration is read from .idp/config.yml in the repository root.
+# If that file does not exist, defaults are used (api-service, nginx:alpine, 7d).
+
+name: Preview Environment
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - master
+
+  pull_request:
+    types: [closed]
+
+  delete:
+    # Triggered when a branch is deleted
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  actions: write
+
+env:
+  STATE_BUCKET: mini-idp-terraform-state
+  AWS_REGION: us-east-1
+
+# -----------------------------------------------------------------
+# Job 1: Setup — determine action, sanitize branch name, read config
+# -----------------------------------------------------------------
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    # Skip tag deletions (we only care about branch deletions)
+    if: github.event.ref_type != 'tag'
+    outputs:
+      environment_name: ${{ steps.sanitize.outputs.environment_name }}
+      action: ${{ steps.decide.outputs.action }}
+      template: ${{ steps.config.outputs.template }}
+      ttl: ${{ steps.config.outputs.ttl }}
+      owner: ${{ steps.config.outputs.owner }}
+      schedule_expression: ${{ steps.config.outputs.schedule_expression }}
+      s3_bucket_arn: ${{ steps.config.outputs.s3_bucket_arn }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        if: github.event_name == 'push'
+
+      - name: Determine branch name
+        id: branch
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            BRANCH="${{ github.ref_name }}"
+          elif [[ "${{ github.event_name }}" == "delete" ]]; then
+            BRANCH="${{ github.event.ref }}"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BRANCH="${{ github.event.pull_request.head.ref }}"
+          fi
+
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "Branch: ${BRANCH}"
+
+      - name: Sanitize branch name to environment name
+        id: sanitize
+        run: |
+          set -euo pipefail
+
+          BRANCH="${{ steps.branch.outputs.branch }}"
+
+          # Remove common prefixes
+          CLEAN=$(echo "$BRANCH" | sed -E 's#^(feature|bugfix|hotfix|fix|chore|release)/##')
+
+          # Lowercase
+          CLEAN=$(echo "$CLEAN" | tr '[:upper:]' '[:lower:]')
+
+          # Replace non-alphanumeric (except hyphens) with hyphens
+          CLEAN=$(echo "$CLEAN" | sed 's/[^a-z0-9-]/-/g')
+
+          # Collapse multiple consecutive hyphens
+          CLEAN=$(echo "$CLEAN" | sed 's/-\{2,\}/-/g')
+
+          # Trim leading/trailing hyphens
+          CLEAN=$(echo "$CLEAN" | sed 's/^-//; s/-$//')
+
+          # Truncate to 24 chars (32 - len("preview-"))
+          CLEAN=$(echo "$CLEAN" | cut -c1-24)
+
+          # Trim trailing hyphen after truncation
+          CLEAN=$(echo "$CLEAN" | sed 's/-$//')
+
+          ENV_NAME="preview-${CLEAN}"
+
+          echo "environment_name=${ENV_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Environment name: ${ENV_NAME}"
+
+      - name: Read .idp/config.yml or use defaults
+        id: config
+        run: |
+          set -euo pipefail
+
+          CONFIG_FILE=".idp/config.yml"
+
+          if [[ "${{ github.event_name }}" == "push" && -f "$CONFIG_FILE" ]]; then
+            echo "Found $CONFIG_FILE, reading configuration..."
+
+            # Install yq for YAML parsing
+            if ! command -v yq &> /dev/null; then
+              wget -qO /usr/local/bin/yq \
+                https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+              chmod +x /usr/local/bin/yq
+            fi
+
+            TEMPLATE=$(yq eval '.template // "api-service"' "$CONFIG_FILE")
+            TTL=$(yq eval '.ttl // "7d"' "$CONFIG_FILE")
+            CONTAINER_IMAGE=$(yq eval '.container_image // "nginx:alpine"' "$CONFIG_FILE")
+            CONTAINER_PORT=$(yq eval '.container_port // 80' "$CONFIG_FILE")
+            SCHEDULE_EXPR=$(yq eval '.schedule_expression // ""' "$CONFIG_FILE")
+            S3_BUCKET=$(yq eval '.s3_bucket_arn // ""' "$CONFIG_FILE")
+          else
+            echo "Using defaults (no config file or non-push event)..."
+            TEMPLATE="api-service"
+            TTL="7d"
+            CONTAINER_IMAGE="nginx:alpine"
+            CONTAINER_PORT="80"
+            SCHEDULE_EXPR=""
+            S3_BUCKET=""
+          fi
+
+          echo "template=${TEMPLATE}" >> "$GITHUB_OUTPUT"
+          echo "ttl=${TTL}" >> "$GITHUB_OUTPUT"
+          echo "container_image=${CONTAINER_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "container_port=${CONTAINER_PORT}" >> "$GITHUB_OUTPUT"
+          echo "schedule_expression=${SCHEDULE_EXPR}" >> "$GITHUB_OUTPUT"
+          echo "s3_bucket_arn=${S3_BUCKET}" >> "$GITHUB_OUTPUT"
+          echo "owner=${{ github.actor }}@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+          echo "Configuration:"
+          echo "  Template: ${TEMPLATE}"
+          echo "  TTL: ${TTL}"
+          echo "  Image: ${CONTAINER_IMAGE}"
+          echo "  Port: ${CONTAINER_PORT}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        if: github.event_name == 'push'
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Decide action (provision / extend / destroy)
+        id: decide
+        run: |
+          set -euo pipefail
+
+          EVENT="${{ github.event_name }}"
+          ENV_NAME="${{ steps.sanitize.outputs.environment_name }}"
+
+          # Destroy on branch delete or PR close
+          if [[ "$EVENT" == "delete" ]]; then
+            echo "action=destroy" >> "$GITHUB_OUTPUT"
+            echo "Action: destroy (branch deleted)"
+            exit 0
+          fi
+
+          if [[ "$EVENT" == "pull_request" ]]; then
+            echo "action=destroy" >> "$GITHUB_OUTPUT"
+            echo "Action: destroy (PR closed)"
+            exit 0
+          fi
+
+          # Push event — check if environment already exists
+          METADATA_KEY="environments/${ENV_NAME}/metadata.json"
+          if aws s3 cp "s3://${STATE_BUCKET}/${METADATA_KEY}" /tmp/existing-metadata.json 2>/dev/null; then
+            STATUS=$(jq -r '.status // "unknown"' /tmp/existing-metadata.json)
+            if [[ "$STATUS" == "active" ]]; then
+              echo "action=extend" >> "$GITHUB_OUTPUT"
+              echo "Action: extend (active environment found)"
+              exit 0
+            fi
+          fi
+
+          echo "action=provision" >> "$GITHUB_OUTPUT"
+          echo "Action: provision (new environment)"
+
+  # -----------------------------------------------------------------
+  # Job 2: Provision — create new preview environment
+  # -----------------------------------------------------------------
+  provision:
+    name: Provision Preview
+    needs: setup
+    if: needs.setup.outputs.action == 'provision'
+    uses: ./.github/workflows/provision.yml
+    with:
+      template: ${{ needs.setup.outputs.template }}
+      environment_name: ${{ needs.setup.outputs.environment_name }}
+      owner: ${{ needs.setup.outputs.owner }}
+      ttl: ${{ needs.setup.outputs.ttl }}
+      schedule_expression: ${{ needs.setup.outputs.schedule_expression }}
+      s3_bucket_arn: ${{ needs.setup.outputs.s3_bucket_arn }}
+    secrets: inherit
+
+  # -----------------------------------------------------------------
+  # Job 3: Extend — update TTL for existing preview environment
+  # -----------------------------------------------------------------
+  extend:
+    name: Extend TTL
+    needs: setup
+    if: needs.setup.outputs.action == 'extend'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Extend environment TTL
+        run: |
+          set -euo pipefail
+
+          ENV_NAME="${{ needs.setup.outputs.environment_name }}"
+          TTL_RAW="${{ needs.setup.outputs.ttl }}"
+
+          # Parse TTL
+          if [[ "$TTL_RAW" =~ ^([0-9]+)d$ ]]; then
+            TTL_SECONDS=$(( ${BASH_REMATCH[1]} * 86400 ))
+          elif [[ "$TTL_RAW" =~ ^([0-9]+)h$ ]]; then
+            TTL_SECONDS=$(( ${BASH_REMATCH[1]} * 3600 ))
+          else
+            echo "::error::Invalid TTL format: $TTL_RAW"
+            exit 1
+          fi
+
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          EXPIRES_AT=$(date -u -d "${NOW} + ${TTL_SECONDS} seconds" +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Download, update, and re-upload metadata
+          METADATA_KEY="environments/${ENV_NAME}/metadata.json"
+          aws s3 cp "s3://${STATE_BUCKET}/${METADATA_KEY}" /tmp/metadata.json
+
+          jq --arg exp "${EXPIRES_AT}" '.expires_at = $exp' /tmp/metadata.json > /tmp/updated-metadata.json
+
+          aws s3 cp /tmp/updated-metadata.json \
+            "s3://${STATE_BUCKET}/${METADATA_KEY}" \
+            --content-type "application/json"
+
+          echo "Extended TTL to ${EXPIRES_AT}"
+
+  # -----------------------------------------------------------------
+  # Job 4: Destroy — tear down preview environment
+  # -----------------------------------------------------------------
+  destroy:
+    name: Destroy Preview
+    needs: setup
+    if: needs.setup.outputs.action == 'destroy'
+    uses: ./.github/workflows/destroy.yml
+    with:
+      environment_name: ${{ needs.setup.outputs.environment_name }}
+    secrets: inherit
+
+  # -----------------------------------------------------------------
+  # Job 5: Comment — post preview URL on associated PR
+  # -----------------------------------------------------------------
+  comment:
+    name: Comment on PR
+    needs: [setup, provision, extend]
+    # Run after provision OR extend (if either succeeded)
+    if: |
+      always() &&
+      needs.setup.outputs.action != 'destroy' &&
+      (needs.provision.result == 'success' || needs.extend.result == 'success')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Find associated PR and post comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          ENV_NAME="${{ needs.setup.outputs.environment_name }}"
+          ACTION="${{ needs.setup.outputs.action }}"
+
+          # Find PR for this branch
+          PR_NUMBER=$(gh pr list \
+            --repo "${{ github.repository }}" \
+            --head "${{ github.ref_name }}" \
+            --json number \
+            --jq '.[0].number // empty' 2>/dev/null || echo "")
+
+          if [[ -z "$PR_NUMBER" ]]; then
+            echo "No PR found for branch ${{ github.ref_name }}, skipping comment."
+            exit 0
+          fi
+
+          echo "Found PR #${PR_NUMBER}"
+
+          # Fetch environment details from S3
+          METADATA_KEY="environments/${ENV_NAME}/metadata.json"
+          OUTPUTS_KEY="environments/${ENV_NAME}/outputs.json"
+
+          EXPIRES_AT="unknown"
+          ENDPOINT="pending"
+          TEMPLATE="${{ needs.setup.outputs.template }}"
+
+          if aws s3 cp "s3://${STATE_BUCKET}/${METADATA_KEY}" /tmp/metadata.json 2>/dev/null; then
+            EXPIRES_AT=$(jq -r '.expires_at // "unknown"' /tmp/metadata.json)
+          fi
+
+          if aws s3 cp "s3://${STATE_BUCKET}/${OUTPUTS_KEY}" /tmp/outputs.json 2>/dev/null; then
+            ENDPOINT=$(jq -r '.endpoint.value // .endpoint // "pending"' /tmp/outputs.json)
+          fi
+
+          if [[ "$ACTION" == "provision" ]]; then
+            STATUS_EMOJI="🚀"
+            STATUS_TEXT="created"
+          else
+            STATUS_EMOJI="🔄"
+            STATUS_TEXT="updated (TTL extended)"
+          fi
+
+          COMMENT_BODY="${STATUS_EMOJI} **Preview Environment ${STATUS_TEXT}**
+
+          | | |
+          |---|---|
+          | **Environment** | \`${ENV_NAME}\` |
+          | **URL** | http://${ENDPOINT} |
+          | **Template** | \`${TEMPLATE}\` |
+          | **Expires** | ${EXPIRES_AT} |
+
+          > This environment is automatically destroyed when this PR is merged or the branch is deleted.
+          > TTL is extended on every push."
+
+          # Check for existing preview comment to update instead of duplicate
+          EXISTING_COMMENT_ID=$(gh api \
+            "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.body | contains("Preview Environment")) | .id' \
+            2>/dev/null | head -1 || echo "")
+
+          if [[ -n "$EXISTING_COMMENT_ID" ]]; then
+            echo "Updating existing comment ${EXISTING_COMMENT_ID}"
+            gh api \
+              --method PATCH \
+              "repos/${{ github.repository }}/issues/comments/${EXISTING_COMMENT_ID}" \
+              -f body="${COMMENT_BODY}"
+          else
+            echo "Creating new comment on PR #${PR_NUMBER}"
+            gh pr comment "${PR_NUMBER}" \
+              --repo "${{ github.repository }}" \
+              --body "${COMMENT_BODY}"
+          fi

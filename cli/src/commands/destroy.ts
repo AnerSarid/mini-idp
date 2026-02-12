@@ -58,18 +58,14 @@ export function registerDestroyCommand(program: Command): void {
         const createdAfter = new Date();
 
         const triggerSpinner = ora('Triggering destroy workflow...').start();
-        await triggerWorkflow('provision.yml', {
+        await triggerWorkflow('destroy.yml', {
           environment_name: name,
-          template: env.metadata.template,
-          owner: env.metadata.owner,
-          ttl: env.metadata.ttl,
-          action: 'destroy',
         });
         triggerSpinner.succeed('Workflow triggered');
 
         const waitSpinner = ora('Waiting for destruction to complete...').start();
         const result = await waitForWorkflowCompletion(
-          'provision.yml',
+          'destroy.yml',
           createdAfter
         );
         waitSpinner.stop();

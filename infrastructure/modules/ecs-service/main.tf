@@ -55,6 +55,20 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http_in" {
   })
 }
 
+resource "aws_vpc_security_group_ingress_rule" "alb_https_in" {
+  count             = var.acm_certificate_arn != "" ? 1 : 0
+  security_group_id = aws_security_group.alb.id
+  description       = "Allow HTTPS from anywhere"
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-alb-https-in"
+  })
+}
+
 resource "aws_vpc_security_group_egress_rule" "alb_to_ecs" {
   security_group_id            = aws_security_group.alb.id
   description                  = "Allow outbound to ECS tasks on the container port"
@@ -151,13 +165,43 @@ resource "aws_lb_target_group" "this" {
 }
 
 ################################################################################
-# ALB Listener
+# ALB Listeners
 ################################################################################
 
+# When no certificate is provided, HTTP forwards to the target group directly.
+# When a certificate is provided, HTTP redirects to HTTPS.
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.this.arn
   port              = 80
   protocol          = "HTTP"
+
+  default_action {
+    type             = var.acm_certificate_arn != "" ? "redirect" : "forward"
+    target_group_arn = var.acm_certificate_arn != "" ? null : aws_lb_target_group.this.arn
+
+    dynamic "redirect" {
+      for_each = var.acm_certificate_arn != "" ? [1] : []
+      content {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
+      }
+    }
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-http-listener"
+  })
+}
+
+# HTTPS listener — only created when an ACM certificate ARN is provided.
+resource "aws_lb_listener" "https" {
+  count             = var.acm_certificate_arn != "" ? 1 : 0
+  load_balancer_arn = aws_lb.this.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.acm_certificate_arn
 
   default_action {
     type             = "forward"
@@ -165,7 +209,7 @@ resource "aws_lb_listener" "http" {
   }
 
   tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-http-listener"
+    Name = "${local.name_prefix}-https-listener"
   })
 }
 
@@ -235,7 +279,7 @@ resource "aws_ecs_service" "this" {
     container_port   = var.container_port
   }
 
-  depends_on = [aws_lb_listener.http]
+  depends_on = [aws_lb_listener.http, aws_lb_listener.https]
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-service"

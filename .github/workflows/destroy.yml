@@ -8,6 +8,13 @@ on:
         required: true
         type: string
 
+  workflow_call:
+    inputs:
+      environment_name:
+        description: "Name of the environment to destroy"
+        required: true
+        type: string
+
 permissions:
   id-token: write
   contents: read

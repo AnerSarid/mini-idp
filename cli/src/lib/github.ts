@@ -54,16 +54,16 @@ export async function getWorkflowRun(runId: number): Promise<{
 
 export async function waitForWorkflowCompletion(
   workflowFile: string,
-  createdAfter: Date
+  createdAfter: Date,
+  timeoutMs: number = 30 * 60 * 1000
 ): Promise<{ conclusion: string; html_url: string }> {
   const octokit = getOctokit();
   const { owner, repo } = getRepoInfo();
 
   const pollInterval = 10_000;
-  const timeout = 15 * 60 * 1000;
   const startTime = Date.now();
 
-  while (Date.now() - startTime < timeout) {
+  while (Date.now() - startTime < timeoutMs) {
     const { data } = await octokit.actions.listWorkflowRuns({
       owner,
       repo,
@@ -86,7 +86,8 @@ export async function waitForWorkflowCompletion(
     await sleep(pollInterval);
   }
 
-  throw new Error('Workflow timed out after 15 minutes');
+  const timeoutMin = Math.round(timeoutMs / 60_000);
+  throw new Error(`Workflow timed out after ${timeoutMin} minutes`);
 }
 
 export async function validateToken(token: string): Promise<string> {

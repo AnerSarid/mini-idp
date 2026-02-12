@@ -38,11 +38,55 @@ Mini IDP follows a three-layer architecture:
 ### TTL Cleanup
 
 ```
-1. `ttl-cleanup.yml` runs daily at 06:00 UTC via cron
+1. `ttl-cleanup.yml` runs every 4 hours via cron
 2. Lists all environments in S3
 3. Checks each metadata.json for expiry
 4. Triggers destroy workflow for any expired environments
 ```
+
+### GitOps Preview Environments
+
+```
+1. Developer pushes to branch feature/payment-api
+2. preview-env.yml triggers automatically (push to non-main branch)
+3. Branch name is sanitized: feature/payment-api → preview-payment-api
+4. Workflow reads .idp/config.yml from repo root (or uses defaults)
+5. If environment already exists and is active:
+   a. Extends expires_at timestamp in S3 metadata
+   b. Posts/updates PR comment with environment details
+6. If environment doesn't exist:
+   a. Calls provision.yml as a reusable workflow
+   b. Posts PR comment with ALB endpoint and logs link
+7. On PR merge or branch delete:
+   a. preview-env.yml triggers (pull_request closed / delete event)
+   b. Calls destroy.yml as a reusable workflow
+```
+
+### Per-Repo Configuration
+
+Each repository can include `.idp/config.yml` to customize preview environments:
+
+```yaml
+template: api-service          # api-service | api-database | scheduled-worker
+container_image: myorg/app     # Docker image to deploy
+container_port: 3000           # Port the container listens on
+ttl: 7d                        # Auto-extended on every push
+```
+
+If `.idp/config.yml` is absent, defaults apply: `api-service`, `nginx:alpine`, port `80`, `7d` TTL.
+
+### Branch Name Sanitization
+
+Branch names are mapped to valid AWS resource names:
+
+```
+feature/payment-api     → preview-payment-api
+bugfix/auth-token       → preview-auth-token
+HOTFIX/Critical_Issue   → preview-critical-issue
+release/v2.0            → preview-v2-0
+```
+
+The `preview-` prefix distinguishes GitOps environments from CLI-created ones.
 
 ## State Management
 
@@ -70,6 +114,27 @@ scheduled-worker = networking + common + scheduled-task
 ```
 
 Each module is independently testable and versioned. Adding a new template means composing existing modules in a new combination.
+
+## Workflow Composition
+
+Workflows follow a reusable pattern to avoid duplication:
+
+```
+preview-env.yml (GitOps automation)
+  ├── calls provision.yml (for new environments)
+  └── calls destroy.yml (on branch delete / PR merge)
+
+CLI (manual / scripted use)
+  ├── triggers provision.yml via workflow_dispatch
+  └── triggers destroy.yml via workflow_dispatch
+
+ttl-cleanup.yml (scheduled cleanup)
+  └── triggers destroy.yml via gh CLI
+```
+
+Both `provision.yml` and `destroy.yml` support two trigger types:
+- `workflow_dispatch` — for manual/API invocation (CLI, `gh workflow run`)
+- `workflow_call` — for composition by other workflows (preview-env)
 
 ## Networking
 

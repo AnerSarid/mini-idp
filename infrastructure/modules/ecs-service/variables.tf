@@ -98,3 +98,9 @@ variable "aws_region" {
   type        = string
   default     = "us-east-1"
 }
+
+variable "acm_certificate_arn" {
+  description = "ARN of an ACM certificate for HTTPS. When provided, an HTTPS listener is created on port 443 and HTTP is redirected to HTTPS. When empty, only HTTP on port 80 is configured."
+  type        = string
+  default     = ""
+}

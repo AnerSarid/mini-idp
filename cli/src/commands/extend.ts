@@ -53,7 +53,6 @@ export function registerExtendCommand(program: Command): void {
         const updatedMetadata = {
           ...env.metadata,
           expires_at: newExpiry.toISOString(),
-          ttl: opts.ttl,
         };
         await updateEnvironmentMetadata(name, updatedMetadata);
         updateSpinner.succeed('Expiry updated');

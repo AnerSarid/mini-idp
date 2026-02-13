@@ -104,3 +104,15 @@ variable "acm_certificate_arn" {
   type        = string
   default     = ""
 }
+
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone ID for creating a DNS CNAME record pointing to the ALB. When empty, no DNS record is created."
+  type        = string
+  default     = ""
+}
+
+variable "dns_name" {
+  description = "Fully qualified domain name for this environment (e.g. preview-my-app.preview.anersarid.dev). Required when route53_zone_id is set."
+  type        = string
+  default     = ""
+}

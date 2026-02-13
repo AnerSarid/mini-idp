@@ -29,6 +29,10 @@ output "task_definition_arn" {
 }
 
 output "endpoint" {
-  description = "Full endpoint URL (HTTPS if certificate provided, HTTP otherwise)"
-  value       = var.acm_certificate_arn != "" ? "https://${aws_lb.this.dns_name}" : "http://${aws_lb.this.dns_name}"
+  description = "Full endpoint URL (friendly DNS with HTTPS if configured, otherwise ALB DNS)"
+  value = var.dns_name != "" ? (
+    "https://${var.dns_name}"
+  ) : (
+    var.acm_certificate_arn != "" ? "https://${aws_lb.this.dns_name}" : "http://${aws_lb.this.dns_name}"
+  )
 }

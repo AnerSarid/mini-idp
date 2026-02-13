@@ -94,6 +94,18 @@ jobs:
           EOF
             fi
 
+            # DNS variables for ALB-based templates
+            if [[ "$TEMPLATE" == "api-service" || "$TEMPLATE" == "api-database" ]]; then
+              ACM_ARN=$(jq -r '.acm_certificate_arn // ""' metadata.json)
+              ZONE_ID=$(jq -r '.route53_zone_id // ""' metadata.json)
+              PREVIEW_DOMAIN=$(jq -r '.preview_domain // ""' metadata.json)
+              cat >> "${TFVARS_FILE}" <<EOF
+          acm_certificate_arn = "${ACM_ARN}"
+          route53_zone_id     = "${ZONE_ID}"
+          preview_domain      = "${PREVIEW_DOMAIN}"
+          EOF
+            fi
+
             sed -i 's/^          //' "${TFVARS_FILE}"
           fi
 

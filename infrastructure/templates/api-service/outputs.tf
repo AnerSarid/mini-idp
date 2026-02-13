@@ -1,6 +1,6 @@
 output "endpoint" {
-  description = "ALB DNS endpoint"
-  value       = module.ecs_service.alb_dns_name
+  description = "Environment endpoint URL (friendly DNS if configured, ALB DNS otherwise)"
+  value       = module.ecs_service.endpoint
 }
 
 output "cluster_arn" {

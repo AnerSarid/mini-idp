@@ -285,3 +285,16 @@ resource "aws_ecs_service" "this" {
     Name = "${local.name_prefix}-service"
   })
 }
+
+################################################################################
+# Route 53 DNS Record
+################################################################################
+
+resource "aws_route53_record" "this" {
+  count   = var.route53_zone_id != "" && var.dns_name != "" ? 1 : 0
+  zone_id = var.route53_zone_id
+  name    = var.dns_name
+  type    = "CNAME"
+  ttl     = 60
+  records = [aws_lb.this.dns_name]
+}

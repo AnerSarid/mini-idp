@@ -69,6 +69,8 @@ module "ecs_service" {
   container_image        = var.container_image
   container_port         = var.container_port
   acm_certificate_arn    = var.acm_certificate_arn
+  route53_zone_id        = var.route53_zone_id
+  dns_name               = var.preview_domain != "" ? "${var.environment_name}.${var.preview_domain}" : ""
   aws_region             = var.aws_region
   tags                   = local.tags
 }

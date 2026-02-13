@@ -213,6 +213,9 @@ jobs:
       ttl: ${{ needs.setup.outputs.ttl }}
       schedule_expression: ${{ needs.setup.outputs.schedule_expression }}
       s3_bucket_arn: ${{ needs.setup.outputs.s3_bucket_arn }}
+      acm_certificate_arn: ${{ vars.PREVIEW_ACM_CERT_ARN }}
+      route53_zone_id: ${{ vars.PREVIEW_ZONE_ID }}
+      preview_domain: ${{ vars.PREVIEW_DOMAIN }}
     secrets: inherit
 
   # -----------------------------------------------------------------
@@ -348,7 +351,7 @@ jobs:
           | | |
           |---|---|
           | **Environment** | \`${ENV_NAME}\` |
-          | **URL** | http://${ENDPOINT} |
+          | **URL** | ${ENDPOINT} |
           | **Template** | \`${TEMPLATE}\` |
           | **Expires** | ${EXPIRES_AT} |
 

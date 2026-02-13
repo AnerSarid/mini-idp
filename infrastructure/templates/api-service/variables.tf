@@ -47,3 +47,15 @@ variable "acm_certificate_arn" {
   type        = string
   default     = ""
 }
+
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone ID for DNS record. Leave empty to skip DNS."
+  type        = string
+  default     = ""
+}
+
+variable "preview_domain" {
+  description = "Base domain for preview environments (e.g. preview.anersarid.dev). Used to construct {environment_name}.{preview_domain}."
+  type        = string
+  default     = ""
+}

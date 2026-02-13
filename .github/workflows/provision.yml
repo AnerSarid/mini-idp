@@ -34,6 +34,21 @@ on:
         required: false
         type: string
         default: ""
+      acm_certificate_arn:
+        description: "ACM certificate ARN for HTTPS"
+        required: false
+        type: string
+        default: ""
+      route53_zone_id:
+        description: "Route 53 zone ID for DNS record"
+        required: false
+        type: string
+        default: ""
+      preview_domain:
+        description: "Base domain for preview environments (e.g. preview.anersarid.dev)"
+        required: false
+        type: string
+        default: ""
 
   workflow_call:
     inputs:
@@ -61,6 +76,21 @@ on:
         default: ""
       s3_bucket_arn:
         description: "S3 bucket ARN (scheduled-worker only)"
+        required: false
+        type: string
+        default: ""
+      acm_certificate_arn:
+        description: "ACM certificate ARN for HTTPS"
+        required: false
+        type: string
+        default: ""
+      route53_zone_id:
+        description: "Route 53 zone ID for DNS record"
+        required: false
+        type: string
+        default: ""
+      preview_domain:
+        description: "Base domain for preview environments (e.g. preview.anersarid.dev)"
         required: false
         type: string
         default: ""
@@ -133,6 +163,22 @@ jobs:
           TFEOF
           fi
 
+          # DNS and HTTPS variables (api-service and api-database templates)
+          if [[ "${{ inputs.template }}" == "api-service" || "${{ inputs.template }}" == "api-database" ]]; then
+            ACM_ARN="${{ inputs.acm_certificate_arn }}"
+            ZONE_ID="${{ inputs.route53_zone_id }}"
+            PREVIEW_DOMAIN="${{ inputs.preview_domain }}"
+            if [[ -n "$ACM_ARN" ]]; then
+              echo "acm_certificate_arn = \"${ACM_ARN}\"" >> "${TFVARS_FILE}"
+            fi
+            if [[ -n "$ZONE_ID" ]]; then
+              echo "route53_zone_id = \"${ZONE_ID}\"" >> "${TFVARS_FILE}"
+            fi
+            if [[ -n "$PREVIEW_DOMAIN" ]]; then
+              echo "preview_domain = \"${PREVIEW_DOMAIN}\"" >> "${TFVARS_FILE}"
+            fi
+          fi
+
           # Remove leading whitespace from heredoc indentation
           sed -i 's/^          //' "${TFVARS_FILE}"
 
@@ -178,7 +224,10 @@ jobs:
             "ttl": "${{ inputs.ttl }}",
             "created_at": "${{ steps.tfvars.outputs.created_at }}",
             "expires_at": "${{ steps.tfvars.outputs.expires_at }}",
-            "status": "active"
+            "status": "active",
+            "acm_certificate_arn": "${{ inputs.acm_certificate_arn }}",
+            "route53_zone_id": "${{ inputs.route53_zone_id }}",
+            "preview_domain": "${{ inputs.preview_domain }}"
           }
           EOF
           sed -i 's/^          //' metadata.json

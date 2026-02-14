@@ -73,5 +73,7 @@ module "ecs_service" {
   route53_zone_id        = var.route53_zone_id
   dns_name               = var.preview_domain != "" ? "${var.environment_name}.${var.preview_domain}" : ""
   aws_region             = var.aws_region
+  environment_variables  = var.environment_variables
+  secret_variables       = var.secret_variables
   tags                   = local.tags
 }

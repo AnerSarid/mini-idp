@@ -68,6 +68,18 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "environment_variables" {
+  description = "Plain environment variables to inject into the container"
+  type        = map(string)
+  default     = {}
+}
+
+variable "secret_variables" {
+  description = "Secrets Manager references to inject as container env vars. Value format: full ARN or ARN:json-key:version-stage:version-id"
+  type        = map(string)
+  default     = {}
+}
+
 variable "tags" {
   description = "Tags applied to every resource in this module."
   type        = map(string)

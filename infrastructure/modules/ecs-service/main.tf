@@ -248,6 +248,20 @@ resource "aws_ecs_task_definition" "this" {
           "awslogs-stream-prefix" = "ecs"
         }
       }
+
+      environment = [
+        for k, v in var.environment_variables : {
+          name  = k
+          value = v
+        }
+      ]
+
+      secrets = [
+        for k, v in var.secret_variables : {
+          name      = k
+          valueFrom = v
+        }
+      ]
     }
   ])
 

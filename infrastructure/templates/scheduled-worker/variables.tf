@@ -47,3 +47,15 @@ variable "s3_bucket_arn" {
   type        = string
   default     = ""
 }
+
+variable "environment_variables" {
+  description = "Plain environment variables for the container"
+  type        = map(string)
+  default     = {}
+}
+
+variable "secret_variables" {
+  description = "Secrets Manager ARN references for the container"
+  type        = map(string)
+  default     = {}
+}

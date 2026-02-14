@@ -70,5 +70,7 @@ module "scheduled_task" {
   container_image        = var.container_image
   s3_bucket_arn          = var.s3_bucket_arn
   aws_region             = var.aws_region
+  environment_variables  = var.environment_variables
+  secret_variables       = var.secret_variables
   tags                   = local.tags
 }

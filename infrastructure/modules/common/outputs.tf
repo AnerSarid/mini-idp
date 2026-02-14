@@ -3,6 +3,11 @@ output "task_execution_role_arn" {
   value       = aws_iam_role.task_execution.arn
 }
 
+output "task_execution_role_name" {
+  description = "Name of the ECS task execution role. Use to attach additional IAM policies."
+  value       = aws_iam_role.task_execution.name
+}
+
 output "task_role_arn" {
   description = "ARN of the ECS task role (assumed by the running container)."
   value       = aws_iam_role.task.arn

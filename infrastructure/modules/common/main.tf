@@ -55,9 +55,10 @@ resource "aws_iam_role_policy" "task_execution_secrets" {
         Action = [
           "secretsmanager:GetSecretValue",
         ]
-        Resource = [
-          aws_secretsmanager_secret.this.arn,
-        ]
+        Resource = concat(
+          [aws_secretsmanager_secret.this.arn],
+          var.additional_secret_arns
+        )
       }
     ]
   })

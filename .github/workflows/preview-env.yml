@@ -59,6 +59,8 @@ jobs:
       container_port: ${{ steps.config.outputs.container_port }}
       dockerfile: ${{ steps.config.outputs.dockerfile }}
       build_context: ${{ steps.config.outputs.build_context }}
+      environment_variables: ${{ steps.config.outputs.environment_variables }}
+      secret_variables: ${{ steps.config.outputs.secret_variables }}
       schedule_expression: ${{ steps.config.outputs.schedule_expression }}
       s3_bucket_arn: ${{ steps.config.outputs.s3_bucket_arn }}
 
@@ -139,6 +141,8 @@ jobs:
             CONTAINER_PORT=$(yq eval '.container_port // 80' "$CONFIG_FILE")
             DOCKERFILE=$(yq eval '.dockerfile // ""' "$CONFIG_FILE")
             BUILD_CONTEXT=$(yq eval '.build_context // "."' "$CONFIG_FILE")
+            ENV_VARS=$(yq eval -o=json '.environment // {}' "$CONFIG_FILE")
+            SECRET_VARS=$(yq eval -o=json '.secrets // {}' "$CONFIG_FILE")
             SCHEDULE_EXPR=$(yq eval '.schedule_expression // ""' "$CONFIG_FILE")
             S3_BUCKET=$(yq eval '.s3_bucket_arn // ""' "$CONFIG_FILE")
           else
@@ -149,6 +153,8 @@ jobs:
             CONTAINER_PORT="80"
             DOCKERFILE=""
             BUILD_CONTEXT="."
+            ENV_VARS="{}"
+            SECRET_VARS="{}"
             SCHEDULE_EXPR=""
             S3_BUCKET=""
           fi
@@ -159,6 +165,8 @@ jobs:
           echo "container_port=${CONTAINER_PORT}" >> "$GITHUB_OUTPUT"
           echo "dockerfile=${DOCKERFILE}" >> "$GITHUB_OUTPUT"
           echo "build_context=${BUILD_CONTEXT}" >> "$GITHUB_OUTPUT"
+          echo "environment_variables=${ENV_VARS}" >> "$GITHUB_OUTPUT"
+          echo "secret_variables=${SECRET_VARS}" >> "$GITHUB_OUTPUT"
           echo "schedule_expression=${SCHEDULE_EXPR}" >> "$GITHUB_OUTPUT"
           echo "s3_bucket_arn=${S3_BUCKET}" >> "$GITHUB_OUTPUT"
           echo "owner=${{ github.actor }}@users.noreply.github.com" >> "$GITHUB_OUTPUT"
@@ -327,6 +335,8 @@ jobs:
       container_port: ${{ needs.setup.outputs.container_port }}
       schedule_expression: ${{ needs.setup.outputs.schedule_expression }}
       s3_bucket_arn: ${{ needs.setup.outputs.s3_bucket_arn }}
+      environment_variables: ${{ needs.setup.outputs.environment_variables }}
+      secret_variables: ${{ needs.setup.outputs.secret_variables }}
       acm_certificate_arn: ${{ vars.PREVIEW_ACM_CERT_ARN }}
       route53_zone_id: ${{ vars.PREVIEW_ZONE_ID }}
       preview_domain: ${{ vars.PREVIEW_DOMAIN }}
@@ -349,6 +359,8 @@ jobs:
       container_port: ${{ needs.setup.outputs.container_port }}
       schedule_expression: ${{ needs.setup.outputs.schedule_expression }}
       s3_bucket_arn: ${{ needs.setup.outputs.s3_bucket_arn }}
+      environment_variables: ${{ needs.setup.outputs.environment_variables }}
+      secret_variables: ${{ needs.setup.outputs.secret_variables }}
       acm_certificate_arn: ${{ vars.PREVIEW_ACM_CERT_ARN }}
       route53_zone_id: ${{ vars.PREVIEW_ZONE_ID }}
       preview_domain: ${{ vars.PREVIEW_DOMAIN }}

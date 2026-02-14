@@ -73,6 +73,35 @@ module "ecs_service" {
   dns_name               = var.preview_domain != "" ? "${var.environment_name}.${var.preview_domain}" : ""
   aws_region             = var.aws_region
   tags                   = local.tags
+
+  # Auto-inject DB connection info as env vars; merge with user-provided vars
+  environment_variables = merge({
+    DB_HOST = module.rds.db_instance_address
+    DB_PORT = tostring(module.rds.db_port)
+    DB_NAME = module.rds.db_name
+  }, var.environment_variables)
+
+  secret_variables = merge({
+    DB_USER     = "${module.rds.db_credentials_secret_arn}:username::"
+    DB_PASSWORD = "${module.rds.db_credentials_secret_arn}:password::"
+  }, var.secret_variables)
+}
+
+# --- Allow execution role to read DB credentials secret ---
+resource "aws_iam_role_policy" "exec_read_db_secret" {
+  name = "idp-${var.environment_name}-exec-db-secret"
+  role = module.common.task_execution_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [module.rds.db_credentials_secret_arn]
+      }
+    ]
+  })
 }
 
 # --- RDS PostgreSQL ---

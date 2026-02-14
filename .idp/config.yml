@@ -25,6 +25,21 @@ ttl: 7d
 # dockerfile: Dockerfile       # Path to Dockerfile (default: auto-detect at repo root)
 # build_context: .              # Docker build context directory (default: repo root)
 
+# Environment variables injected into the container at launch.
+# These are plain-text values suitable for non-sensitive configuration.
+# environment:
+#   NODE_ENV: preview
+#   LOG_LEVEL: debug
+
+# Secrets from AWS Secrets Manager injected as container env vars at launch.
+# Use the full ARN:json-key::  format (ECS valueFrom syntax).
+# The actual secret values never touch Terraform state or workflow logs.
+# secrets:
+#   API_KEY: "arn:aws:secretsmanager:us-east-1:ACCOUNT:secret:NAME:KEY::"
+#
+# Note: The api-database template auto-injects DB_HOST, DB_PORT, DB_NAME,
+# DB_USER, and DB_PASSWORD — no configuration needed.
+
 # Scheduled task configuration (scheduled-worker template only)
 # schedule_expression: "rate(1 hour)"
 # s3_bucket_arn: "arn:aws:s3:::my-bucket"

@@ -293,6 +293,11 @@ resource "aws_ecs_service" "this" {
     container_port   = var.container_port
   }
 
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
   depends_on = [aws_lb_listener.http, aws_lb_listener.https]
 
   tags = merge(local.common_tags, {

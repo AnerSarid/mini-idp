@@ -324,11 +324,12 @@ jobs:
           tofu plan \
             -var-file="${{ github.workspace }}/${{ steps.tfvars.outputs.tfvars_file }}" \
             -out=tfplan \
-            -input=false
+            -input=false \
+            -lock-timeout=5m
 
       - name: Tofu apply
         working-directory: infrastructure/templates/${{ inputs.template }}
-        run: tofu apply -input=false tfplan
+        run: tofu apply -input=false -lock-timeout=5m tfplan
 
       - name: Upload outputs to S3
         working-directory: infrastructure/templates/${{ inputs.template }}

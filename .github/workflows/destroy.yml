@@ -139,7 +139,8 @@ jobs:
           tofu destroy \
             -var-file="${{ github.workspace }}/${{ steps.tfvars.outputs.tfvars_file }}" \
             -auto-approve \
-            -input=false
+            -input=false \
+            -lock-timeout=5m
 
       - name: Clean up S3 artifacts
         run: |

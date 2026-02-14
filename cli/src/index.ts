@@ -7,6 +7,7 @@ import { registerDestroyCommand } from './commands/destroy.js';
 import { registerListCommand } from './commands/list.js';
 import { registerExtendCommand } from './commands/extend.js';
 import { registerTemplatesCommand } from './commands/templates.js';
+import { registerUnlockCommand } from './commands/unlock.js';
 
 const program = new Command();
 
@@ -21,5 +22,6 @@ registerDestroyCommand(program);
 registerListCommand(program);
 registerExtendCommand(program);
 registerTemplatesCommand(program);
+registerUnlockCommand(program);
 
 program.parse(process.argv);

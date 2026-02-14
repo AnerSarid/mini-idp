@@ -141,8 +141,8 @@ jobs:
             CONTAINER_PORT=$(yq eval '.container_port // 80' "$CONFIG_FILE")
             DOCKERFILE=$(yq eval '.dockerfile // ""' "$CONFIG_FILE")
             BUILD_CONTEXT=$(yq eval '.build_context // "."' "$CONFIG_FILE")
-            ENV_VARS=$(yq eval -o=json '.environment // {}' "$CONFIG_FILE")
-            SECRET_VARS=$(yq eval -o=json '.secrets // {}' "$CONFIG_FILE")
+            ENV_VARS=$(yq eval -o=json -I0 '.environment // {}' "$CONFIG_FILE")
+            SECRET_VARS=$(yq eval -o=json -I0 '.secrets // {}' "$CONFIG_FILE")
             SCHEDULE_EXPR=$(yq eval '.schedule_expression // ""' "$CONFIG_FILE")
             S3_BUCKET=$(yq eval '.s3_bucket_arn // ""' "$CONFIG_FILE")
           else

@@ -48,6 +48,19 @@ resource "aws_ecr_repository" "preview" {
   }
 }
 
+################################################################################
+# ECR Pull-Through Cache — Docker Hub
+#
+# Caches Docker Hub images locally in this ECR registry to avoid rate limits.
+# Images pulled as: <account>.dkr.ecr.<region>.amazonaws.com/docker-hub/<image>
+# e.g. .../docker-hub/library/node:20-alpine
+################################################################################
+
+resource "aws_ecr_pull_through_cache_rule" "docker_hub" {
+  ecr_repository_prefix = "docker-hub"
+  upstream_registry_url = "registry-1.docker.io"
+}
+
 resource "aws_ecr_lifecycle_policy" "preview" {
   repository = aws_ecr_repository.preview.name
 

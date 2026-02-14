@@ -51,9 +51,10 @@ module "networking" {
 
 # --- Common (IAM, Logs, Secrets) ---
 module "common" {
-  source           = "../../modules/common"
-  environment_name = var.environment_name
-  tags             = local.tags
+  source             = "../../modules/common"
+  environment_name   = var.environment_name
+  log_retention_days = var.log_retention_days
+  tags               = local.tags
 }
 
 # --- Scheduled Task ---
@@ -69,6 +70,8 @@ module "scheduled_task" {
   schedule_expression    = var.schedule_expression
   container_image        = var.container_image
   s3_bucket_arn          = var.s3_bucket_arn
+  cpu                    = var.cpu
+  memory                 = var.memory
   aws_region             = var.aws_region
   environment_variables  = var.environment_variables
   secret_variables       = var.secret_variables

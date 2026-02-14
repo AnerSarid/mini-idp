@@ -48,6 +48,24 @@ variable "s3_bucket_arn" {
   default     = ""
 }
 
+variable "cpu" {
+  description = "CPU units for the Fargate task (256, 512, 1024, 2048, 4096)"
+  type        = number
+  default     = 256
+}
+
+variable "memory" {
+  description = "Memory in MiB for the Fargate task"
+  type        = number
+  default     = 512
+}
+
+variable "log_retention_days" {
+  description = "CloudWatch log retention in days"
+  type        = number
+  default     = 3
+}
+
 variable "environment_variables" {
   description = "Plain environment variables for the container"
   type        = map(string)

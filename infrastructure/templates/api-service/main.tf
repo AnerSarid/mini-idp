@@ -52,9 +52,10 @@ module "networking" {
 
 # --- Common (IAM, Logs, Secrets) ---
 module "common" {
-  source           = "../../modules/common"
-  environment_name = var.environment_name
-  tags             = local.tags
+  source             = "../../modules/common"
+  environment_name   = var.environment_name
+  log_retention_days = var.log_retention_days
+  tags               = local.tags
 }
 
 # --- ECS Fargate Service + ALB ---
@@ -69,6 +70,8 @@ module "ecs_service" {
   log_group_name         = module.common.log_group_name
   container_image        = var.container_image
   container_port         = var.container_port
+  cpu                    = var.cpu
+  memory                 = var.memory
   acm_certificate_arn    = var.acm_certificate_arn
   route53_zone_id        = var.route53_zone_id
   dns_name               = var.preview_domain != "" ? "${var.environment_name}.${var.preview_domain}" : ""

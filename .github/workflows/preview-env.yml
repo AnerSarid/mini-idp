@@ -63,6 +63,9 @@ jobs:
       secret_variables: ${{ steps.config.outputs.secret_variables }}
       schedule_expression: ${{ steps.config.outputs.schedule_expression }}
       s3_bucket_arn: ${{ steps.config.outputs.s3_bucket_arn }}
+      cpu: ${{ steps.config.outputs.cpu }}
+      memory: ${{ steps.config.outputs.memory }}
+      log_retention_days: ${{ steps.config.outputs.log_retention_days }}
 
     steps:
       - name: Checkout code
@@ -145,6 +148,9 @@ jobs:
             SECRET_VARS=$(yq eval -o=json -I0 '.secrets // {}' "$CONFIG_FILE")
             SCHEDULE_EXPR=$(yq eval '.schedule_expression // ""' "$CONFIG_FILE")
             S3_BUCKET=$(yq eval '.s3_bucket_arn // ""' "$CONFIG_FILE")
+            CPU=$(yq eval '.cpu // "256"' "$CONFIG_FILE")
+            MEMORY=$(yq eval '.memory // "512"' "$CONFIG_FILE")
+            LOG_RETENTION=$(yq eval '.log_retention_days // "3"' "$CONFIG_FILE")
           else
             echo "Using defaults (no config file or non-push event)..."
             TEMPLATE="api-service"
@@ -157,6 +163,9 @@ jobs:
             SECRET_VARS="{}"
             SCHEDULE_EXPR=""
             S3_BUCKET=""
+            CPU="256"
+            MEMORY="512"
+            LOG_RETENTION="3"
           fi
 
           echo "template=${TEMPLATE}" >> "$GITHUB_OUTPUT"
@@ -169,6 +178,9 @@ jobs:
           echo "secret_variables=${SECRET_VARS}" >> "$GITHUB_OUTPUT"
           echo "schedule_expression=${SCHEDULE_EXPR}" >> "$GITHUB_OUTPUT"
           echo "s3_bucket_arn=${S3_BUCKET}" >> "$GITHUB_OUTPUT"
+          echo "cpu=${CPU}" >> "$GITHUB_OUTPUT"
+          echo "memory=${MEMORY}" >> "$GITHUB_OUTPUT"
+          echo "log_retention_days=${LOG_RETENTION}" >> "$GITHUB_OUTPUT"
           echo "owner=${{ github.actor }}@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
           echo "Configuration:"
@@ -176,6 +188,9 @@ jobs:
           echo "  TTL: ${TTL}"
           echo "  Image: ${CONTAINER_IMAGE}"
           echo "  Port: ${CONTAINER_PORT}"
+          echo "  CPU: ${CPU}"
+          echo "  Memory: ${MEMORY}"
+          echo "  Log retention: ${LOG_RETENTION} days"
           echo "  Dockerfile: ${DOCKERFILE:-auto-detect}"
           echo "  Build context: ${BUILD_CONTEXT}"
 
@@ -383,6 +398,9 @@ jobs:
       s3_bucket_arn: ${{ needs.setup.outputs.s3_bucket_arn }}
       environment_variables: ${{ needs.setup.outputs.environment_variables }}
       secret_variables: ${{ needs.setup.outputs.secret_variables }}
+      cpu: ${{ needs.setup.outputs.cpu }}
+      memory: ${{ needs.setup.outputs.memory }}
+      log_retention_days: ${{ needs.setup.outputs.log_retention_days }}
       acm_certificate_arn: ${{ vars.PREVIEW_ACM_CERT_ARN }}
       route53_zone_id: ${{ vars.PREVIEW_ZONE_ID }}
       preview_domain: ${{ vars.PREVIEW_DOMAIN }}
@@ -407,6 +425,9 @@ jobs:
       s3_bucket_arn: ${{ needs.setup.outputs.s3_bucket_arn }}
       environment_variables: ${{ needs.setup.outputs.environment_variables }}
       secret_variables: ${{ needs.setup.outputs.secret_variables }}
+      cpu: ${{ needs.setup.outputs.cpu }}
+      memory: ${{ needs.setup.outputs.memory }}
+      log_retention_days: ${{ needs.setup.outputs.log_retention_days }}
       acm_certificate_arn: ${{ vars.PREVIEW_ACM_CERT_ARN }}
       route53_zone_id: ${{ vars.PREVIEW_ZONE_ID }}
       preview_domain: ${{ vars.PREVIEW_DOMAIN }}

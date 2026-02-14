@@ -19,6 +19,21 @@ container_port: 80
 # Extended automatically on every push to the branch.
 ttl: 7d
 
+# Resource sizing for the Fargate task.
+# cpu: 256, 512, 1024, 2048, or 4096 (default: 256)
+# memory: must be valid for the chosen CPU (default: 512)
+#   256 CPU  → 512, 1024, 2048
+#   512 CPU  → 1024–4096
+#   1024 CPU → 2048–8192
+#   2048 CPU → 4096–16384
+#   4096 CPU → 8192–30720
+# cpu: 256
+# memory: 512
+
+# CloudWatch log retention in days (default: 3).
+# Valid values: 1, 3, 5, 7, 14, 30, 60, 90
+# log_retention_days: 3
+
 # Docker build configuration
 # If a Dockerfile is found, the image is built, pushed to ECR, and deployed.
 # If no Dockerfile exists, container_image above is used as-is.

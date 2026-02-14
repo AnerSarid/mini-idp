@@ -179,6 +179,52 @@ jobs:
           echo "  Dockerfile: ${DOCKERFILE:-auto-detect}"
           echo "  Build context: ${BUILD_CONTEXT}"
 
+      - name: Validate configuration
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          ERRORS=()
+
+          # Template
+          TEMPLATE="${{ steps.config.outputs.template }}"
+          if [[ "$TEMPLATE" != "api-service" && "$TEMPLATE" != "api-database" && "$TEMPLATE" != "scheduled-worker" ]]; then
+            ERRORS+=("Invalid template '${TEMPLATE}' in .idp/config.yml. Must be one of: api-service, api-database, scheduled-worker.")
+          fi
+
+          # TTL
+          TTL="${{ steps.config.outputs.ttl }}"
+          if [[ ! "$TTL" =~ ^[0-9]+[dh]$ ]]; then
+            ERRORS+=("Invalid ttl '${TTL}' in .idp/config.yml. Must be a number followed by d or h (e.g. 7d, 24h).")
+          fi
+
+          # Port
+          PORT="${{ steps.config.outputs.container_port }}"
+          if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
+            ERRORS+=("Invalid container_port '${PORT}' in .idp/config.yml. Must be 1-65535.")
+          fi
+
+          # Schedule expression required for scheduled-worker
+          SCHEDULE="${{ steps.config.outputs.schedule_expression }}"
+          if [[ "$TEMPLATE" == "scheduled-worker" && -z "$SCHEDULE" ]]; then
+            ERRORS+=("schedule_expression is required in .idp/config.yml when template is scheduled-worker.")
+          fi
+
+          # Environment name (already sanitized, but sanity check)
+          ENV_NAME="${{ steps.sanitize.outputs.environment_name }}"
+          if [[ ${#ENV_NAME} -lt 2 || ${#ENV_NAME} -gt 32 ]]; then
+            ERRORS+=("Sanitized environment name '${ENV_NAME}' is outside the 2-32 char range. Consider a shorter branch name.")
+          fi
+
+          # Report all errors at once
+          if [[ ${#ERRORS[@]} -gt 0 ]]; then
+            for err in "${ERRORS[@]}"; do
+              echo "::error::${err}"
+            done
+            exit 1
+          fi
+
+          echo "All configuration validated successfully."
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         if: github.event_name == 'push'

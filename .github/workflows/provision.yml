@@ -150,6 +150,64 @@ jobs:
     environment: production
 
     steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+
+          # --- environment_name: lowercase alphanumeric + hyphens, 2-32 chars ---
+          ENV_NAME="${{ inputs.environment_name }}"
+          if [[ ! "$ENV_NAME" =~ ^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$ ]] && [[ ! "$ENV_NAME" =~ ^[a-z0-9]{2}$ ]]; then
+            echo "::error::Invalid environment_name '${ENV_NAME}'. Must be 2-32 chars, lowercase alphanumeric and hyphens, cannot start/end with a hyphen."
+            exit 1
+          fi
+
+          # --- template: must be a known value ---
+          TEMPLATE="${{ inputs.template }}"
+          if [[ "$TEMPLATE" != "api-service" && "$TEMPLATE" != "api-database" && "$TEMPLATE" != "scheduled-worker" ]]; then
+            echo "::error::Invalid template '${TEMPLATE}'. Must be one of: api-service, api-database, scheduled-worker."
+            exit 1
+          fi
+
+          # --- ttl: number followed by d or h ---
+          TTL="${{ inputs.ttl }}"
+          if [[ ! "$TTL" =~ ^[0-9]+[dh]$ ]]; then
+            echo "::error::Invalid TTL '${TTL}'. Must be a number followed by d (days) or h (hours). Example: 7d, 24h."
+            exit 1
+          fi
+
+          # --- container_port: valid port number ---
+          PORT="${{ inputs.container_port }}"
+          if [[ -n "$PORT" ]] && ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
+            echo "::error::Invalid container_port '${PORT}'. Must be a number between 1 and 65535."
+            exit 1
+          fi
+
+          # --- schedule_expression: if template is scheduled-worker, must be provided ---
+          SCHEDULE="${{ inputs.schedule_expression }}"
+          if [[ "$TEMPLATE" == "scheduled-worker" && -z "$SCHEDULE" ]]; then
+            echo "::error::schedule_expression is required for the scheduled-worker template."
+            exit 1
+          fi
+
+          # --- environment_variables / secret_variables: must be valid JSON objects ---
+          ENV_VARS='${{ inputs.environment_variables }}'
+          if [[ -n "$ENV_VARS" && "$ENV_VARS" != "{}" ]]; then
+            if ! echo "$ENV_VARS" | jq -e 'type == "object"' > /dev/null 2>&1; then
+              echo "::error::environment_variables must be a valid JSON object. Got: ${ENV_VARS}"
+              exit 1
+            fi
+          fi
+
+          SECRET_VARS='${{ inputs.secret_variables }}'
+          if [[ -n "$SECRET_VARS" && "$SECRET_VARS" != "{}" ]]; then
+            if ! echo "$SECRET_VARS" | jq -e 'type == "object"' > /dev/null 2>&1; then
+              echo "::error::secret_variables must be a valid JSON object. Got: ${SECRET_VARS}"
+              exit 1
+            fi
+          fi
+
+          echo "All inputs validated successfully."
+
       - name: Checkout code
         uses: actions/checkout@v4
 

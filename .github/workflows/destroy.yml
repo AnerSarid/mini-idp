@@ -40,8 +40,11 @@ jobs:
           fi
           echo "Input validated: ${ENV_NAME}"
 
-      - name: Checkout code
+      - name: Checkout infrastructure code
         uses: actions/checkout@v4
+        with:
+          repository: AnerSarid/mini-idp
+          ref: main
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4

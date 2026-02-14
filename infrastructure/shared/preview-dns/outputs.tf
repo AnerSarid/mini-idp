@@ -9,7 +9,7 @@ output "preview_zone_name" {
 }
 
 output "acm_certificate_arn" {
-  description = "ARN of the wildcard ACM certificate for *.preview.anersarid.dev"
+  description = "ARN of the wildcard ACM certificate for *.preview.anersarid.com"
   value       = aws_acm_certificate.wildcard.arn
 }
 

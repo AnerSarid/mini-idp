@@ -31,24 +31,13 @@ provider "aws" {
 }
 
 ################################################################################
-# Subdomain Hosted Zone
+# Preview Zone (managed outside Terraform — NS delegation is in Cloudflare)
+# Imported via: tofu import aws_route53_zone.preview Z0154651Y1VFNGTT5STY
 ################################################################################
 
 resource "aws_route53_zone" "preview" {
-  name    = "${var.preview_subdomain}.${var.parent_domain}"
-  comment = "Hosted zone for mini-idp preview environments"
-}
-
-################################################################################
-# NS Delegation from parent zone
-################################################################################
-
-resource "aws_route53_record" "delegation" {
-  zone_id = var.parent_zone_id
-  name    = "${var.preview_subdomain}.${var.parent_domain}"
-  type    = "NS"
-  ttl     = 300
-  records = aws_route53_zone.preview.name_servers
+  name    = var.preview_domain
+  comment = "mini-idp preview environments"
 }
 
 ################################################################################
@@ -56,7 +45,7 @@ resource "aws_route53_record" "delegation" {
 ################################################################################
 
 resource "aws_acm_certificate" "wildcard" {
-  domain_name       = "*.${var.preview_subdomain}.${var.parent_domain}"
+  domain_name       = "*.${var.preview_domain}"
   validation_method = "DNS"
 
   lifecycle {

@@ -1,19 +1,13 @@
-variable "parent_domain" {
-  description = "Parent domain name (e.g. anersarid.dev)"
+variable "preview_domain" {
+  description = "Fully qualified domain for preview environments"
   type        = string
-  default     = "anersarid.dev"
+  default     = "preview.anersarid.com"
 }
 
-variable "parent_zone_id" {
-  description = "Route 53 hosted zone ID of the parent domain"
+variable "preview_zone_id" {
+  description = "Route 53 hosted zone ID for the preview subdomain (created outside Terraform, NS delegation managed in Cloudflare)"
   type        = string
-  default     = "Z059828920290Q58NVZR9"
-}
-
-variable "preview_subdomain" {
-  description = "Subdomain prefix for preview environments (e.g. preview)"
-  type        = string
-  default     = "preview"
+  default     = "Z0154651Y1VFNGTT5STY"
 }
 
 variable "aws_region" {

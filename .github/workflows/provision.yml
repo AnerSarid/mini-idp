@@ -45,10 +45,20 @@ on:
         type: string
         default: ""
       preview_domain:
-        description: "Base domain for preview environments (e.g. preview.anersarid.dev)"
+        description: "Base domain for preview environments (e.g. preview.anersarid.com)"
         required: false
         type: string
         default: ""
+      container_image:
+        description: "Container image URI (e.g. nginx:alpine or ECR URI)"
+        required: false
+        type: string
+        default: "nginx:alpine"
+      container_port:
+        description: "Container port"
+        required: false
+        type: string
+        default: "80"
 
   workflow_call:
     inputs:
@@ -90,10 +100,20 @@ on:
         type: string
         default: ""
       preview_domain:
-        description: "Base domain for preview environments (e.g. preview.anersarid.dev)"
+        description: "Base domain for preview environments (e.g. preview.anersarid.com)"
         required: false
         type: string
         default: ""
+      container_image:
+        description: "Container image URI (e.g. nginx:alpine or ECR URI)"
+        required: false
+        type: string
+        default: "nginx:alpine"
+      container_port:
+        description: "Container port"
+        required: false
+        type: string
+        default: "80"
 
 permissions:
   id-token: write
@@ -179,6 +199,16 @@ jobs:
             fi
           fi
 
+          # Container configuration (all templates)
+          CONTAINER_IMAGE="${{ inputs.container_image }}"
+          CONTAINER_PORT="${{ inputs.container_port }}"
+          if [[ -n "$CONTAINER_IMAGE" && "$CONTAINER_IMAGE" != "nginx:alpine" ]]; then
+            echo "container_image = \"${CONTAINER_IMAGE}\"" >> "${TFVARS_FILE}"
+          fi
+          if [[ -n "$CONTAINER_PORT" && "$CONTAINER_PORT" != "80" ]]; then
+            echo "container_port = ${CONTAINER_PORT}" >> "${TFVARS_FILE}"
+          fi
+
           # Remove leading whitespace from heredoc indentation
           sed -i 's/^          //' "${TFVARS_FILE}"
 
@@ -225,6 +255,7 @@ jobs:
             "created_at": "${{ steps.tfvars.outputs.created_at }}",
             "expires_at": "${{ steps.tfvars.outputs.expires_at }}",
             "status": "active",
+            "container_image": "${{ inputs.container_image }}",
             "acm_certificate_arn": "${{ inputs.acm_certificate_arn }}",
             "route53_zone_id": "${{ inputs.route53_zone_id }}",
             "preview_domain": "${{ inputs.preview_domain }}"

@@ -15,7 +15,7 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
   actions: write  # Required to trigger the destroy workflow
 
 env:
@@ -231,3 +231,13 @@ jobs:
           if [[ "$ERROR_COUNT" -gt 0 ]]; then
             echo "::warning::${ERROR_COUNT} environment(s) had errors during cleanup check"
           fi
+
+  # -----------------------------------------------------------------
+  # Dashboard — update ENVIRONMENTS.md after cleanup
+  # -----------------------------------------------------------------
+  dashboard:
+    name: Update Dashboard
+    needs: cleanup
+    if: always()
+    uses: ./.github/workflows/update-dashboard.yml
+    secrets: inherit

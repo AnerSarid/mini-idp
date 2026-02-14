@@ -1,0 +1,211 @@
+# update-dashboard.yml - Auto-generate ENVIRONMENTS.md from S3 metadata
+#
+# Reusable workflow that scans all environment metadata in S3 and generates
+# a markdown dashboard committed to main. Called after every provision,
+# extend, or destroy event.
+
+name: Update Dashboard
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write
+
+concurrency:
+  group: update-dashboard
+  cancel-in-progress: false
+
+env:
+  STATE_BUCKET: mini-idp-terraform-state
+  AWS_REGION: us-east-1
+
+jobs:
+  dashboard:
+    name: Generate ENVIRONMENTS.md
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generate dashboard
+        run: |
+          set -euo pipefail
+
+          NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # ----------------------------------------------------------
+          # List all environment prefixes in S3
+          # ----------------------------------------------------------
+          ENVS=$(aws s3api list-objects-v2 \
+            --bucket "${STATE_BUCKET}" \
+            --prefix "environments/" \
+            --delimiter "/" \
+            --query "CommonPrefixes[].Prefix" \
+            --output text 2>/dev/null || echo "")
+
+          # ----------------------------------------------------------
+          # Build markdown table rows from metadata + outputs
+          # ----------------------------------------------------------
+          TABLE_ROWS=""
+          ACTIVE_COUNT=0
+          TOTAL_COUNT=0
+
+          if [[ -n "$ENVS" && "$ENVS" != "None" ]]; then
+            for ENV_PREFIX in $ENVS; do
+              ENV_NAME=$(echo "$ENV_PREFIX" | sed 's|environments/||' | sed 's|/||')
+              [[ -z "$ENV_NAME" ]] && continue
+
+              TOTAL_COUNT=$((TOTAL_COUNT + 1))
+
+              # Download metadata
+              if ! aws s3 cp "s3://${STATE_BUCKET}/${ENV_PREFIX}metadata.json" "/tmp/meta-${ENV_NAME}.json" 2>/dev/null; then
+                continue
+              fi
+
+              STATUS=$(jq -r '.status // "unknown"' "/tmp/meta-${ENV_NAME}.json")
+
+              # Skip destroyed environments
+              if [[ "$STATUS" == "destroyed" || "$STATUS" == "destroying" ]]; then
+                continue
+              fi
+
+              TEMPLATE=$(jq -r '.template // "-"' "/tmp/meta-${ENV_NAME}.json")
+              OWNER=$(jq -r '.owner // "-"' "/tmp/meta-${ENV_NAME}.json")
+              CREATED_AT=$(jq -r '.created_at // "-"' "/tmp/meta-${ENV_NAME}.json")
+              EXPIRES_AT=$(jq -r '.expires_at // "-"' "/tmp/meta-${ENV_NAME}.json")
+              CONTAINER_IMAGE=$(jq -r '.container_image // "nginx:alpine"' "/tmp/meta-${ENV_NAME}.json")
+
+              # Shorten owner (strip @users.noreply.github.com)
+              OWNER_SHORT=$(echo "$OWNER" | sed 's/@users.noreply.github.com//')
+
+              # Shorten container image for display
+              IMAGE_SHORT="$CONTAINER_IMAGE"
+              if [[ "$CONTAINER_IMAGE" == *".dkr.ecr."* ]]; then
+                # ECR image — show just the tag
+                IMAGE_SHORT=$(echo "$CONTAINER_IMAGE" | sed 's|.*:||')
+              fi
+
+              # Try to get the endpoint URL from outputs
+              URL="-"
+              if aws s3 cp "s3://${STATE_BUCKET}/${ENV_PREFIX}outputs.json" "/tmp/out-${ENV_NAME}.json" 2>/dev/null; then
+                ENDPOINT=$(jq -r '.endpoint.value // .endpoint // ""' "/tmp/out-${ENV_NAME}.json")
+                if [[ -n "$ENDPOINT" && "$ENDPOINT" != "null" ]]; then
+                  URL="[${ENDPOINT}](${ENDPOINT})"
+                fi
+              fi
+
+              # Check if expired
+              STATUS_DISPLAY="$STATUS"
+              if [[ "$EXPIRES_AT" != "-" ]]; then
+                EXPIRES_EPOCH=$(date -u -d "${EXPIRES_AT}" +%s 2>/dev/null || echo "0")
+                NOW_EPOCH=$(date -u +%s)
+                if [[ "$EXPIRES_EPOCH" -gt 0 && "$EXPIRES_EPOCH" -lt "$NOW_EPOCH" ]]; then
+                  STATUS_DISPLAY="expired"
+                fi
+              fi
+
+              # Format dates for readability (YYYY-MM-DD HH:MM UTC)
+              CREATED_SHORT=$(echo "$CREATED_AT" | sed 's/T/ /; s/Z/ UTC/')
+              EXPIRES_SHORT=$(echo "$EXPIRES_AT" | sed 's/T/ /; s/Z/ UTC/')
+
+              TABLE_ROWS="${TABLE_ROWS}| \`${ENV_NAME}\` | \`${TEMPLATE}\` | ${OWNER_SHORT} | ${URL} | ${CREATED_SHORT} | ${EXPIRES_SHORT} | ${STATUS_DISPLAY} |\n"
+              ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
+
+              rm -f "/tmp/meta-${ENV_NAME}.json" "/tmp/out-${ENV_NAME}.json"
+            done
+          fi
+
+          # ----------------------------------------------------------
+          # Write ENVIRONMENTS.md
+          # ----------------------------------------------------------
+          cat > ENVIRONMENTS.md <<MDEOF
+          # Active Preview Environments
+
+          > Auto-generated by the [Update Dashboard](.github/workflows/update-dashboard.yml) workflow.
+          > Last updated: ${NOW_ISO}
+
+          MDEOF
+
+          if [[ "$ACTIVE_COUNT" -eq 0 ]]; then
+            cat >> ENVIRONMENTS.md <<MDEOF
+          No active preview environments.
+
+          Push to a non-main branch to create one automatically.
+          MDEOF
+          else
+            cat >> ENVIRONMENTS.md <<MDEOF
+          **${ACTIVE_COUNT} active environment(s)**
+
+          | Environment | Template | Owner | URL | Created | Expires | Status |
+          |-------------|----------|-------|-----|---------|---------|--------|
+          MDEOF
+
+            echo -e "${TABLE_ROWS}" >> ENVIRONMENTS.md
+          fi
+
+          cat >> ENVIRONMENTS.md <<MDEOF
+
+          ---
+
+          <details>
+          <summary>How preview environments work</summary>
+
+          - **Created** automatically when you push a non-main branch
+          - **Updated** on every subsequent push to the same branch (TTL extended, code redeployed)
+          - **Destroyed** when the PR is merged/closed or the branch is deleted
+          - **TTL cleanup** runs every 4 hours and destroys expired environments
+
+          Configuration: [\`.idp/config.yml\`](.idp/config.yml)
+
+          </details>
+          MDEOF
+
+          # Remove heredoc indentation
+          sed -i 's/^          //' ENVIRONMENTS.md
+
+          echo "Generated ENVIRONMENTS.md with ${ACTIVE_COUNT} active environment(s)"
+
+      - name: Commit and push to main
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add ENVIRONMENTS.md
+
+          # No-op if nothing changed
+          if git diff --cached --quiet; then
+            echo "No changes to ENVIRONMENTS.md, skipping commit."
+            exit 0
+          fi
+
+          git commit -m "docs: update ENVIRONMENTS.md [skip ci]"
+
+          # Retry push with rebase (handles concurrent dashboard updates)
+          MAX_RETRIES=3
+          for i in $(seq 1 $MAX_RETRIES); do
+            if git push origin main; then
+              echo "Push succeeded on attempt ${i}"
+              exit 0
+            fi
+            echo "Push failed (attempt ${i}/${MAX_RETRIES}), rebasing..."
+            git pull --rebase origin main
+          done
+
+          echo "::error::Failed to push after ${MAX_RETRIES} attempts"
+          exit 1

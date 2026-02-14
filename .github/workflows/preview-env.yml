@@ -3,8 +3,11 @@
 # Automatically provisions an ephemeral preview environment for every
 # non-main branch push, and destroys it when the branch is merged or deleted.
 #
+# If a Dockerfile exists at the repo root (or path specified in .idp/config.yml),
+# the image is built, pushed to ECR, and deployed. Otherwise, the configured
+# container_image (default: nginx:alpine) is used.
+#
 # Configuration is read from .idp/config.yml in the repository root.
-# If that file does not exist, defaults are used (api-service, nginx:alpine, 7d).
 
 name: Preview Environment
 
@@ -22,7 +25,7 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
   pull-requests: write
   actions: write
 
@@ -52,6 +55,10 @@ jobs:
       template: ${{ steps.config.outputs.template }}
       ttl: ${{ steps.config.outputs.ttl }}
       owner: ${{ steps.config.outputs.owner }}
+      container_image: ${{ steps.config.outputs.container_image }}
+      container_port: ${{ steps.config.outputs.container_port }}
+      dockerfile: ${{ steps.config.outputs.dockerfile }}
+      build_context: ${{ steps.config.outputs.build_context }}
       schedule_expression: ${{ steps.config.outputs.schedule_expression }}
       s3_bucket_arn: ${{ steps.config.outputs.s3_bucket_arn }}
 
@@ -130,6 +137,8 @@ jobs:
             TTL=$(yq eval '.ttl // "7d"' "$CONFIG_FILE")
             CONTAINER_IMAGE=$(yq eval '.container_image // "nginx:alpine"' "$CONFIG_FILE")
             CONTAINER_PORT=$(yq eval '.container_port // 80' "$CONFIG_FILE")
+            DOCKERFILE=$(yq eval '.dockerfile // ""' "$CONFIG_FILE")
+            BUILD_CONTEXT=$(yq eval '.build_context // "."' "$CONFIG_FILE")
             SCHEDULE_EXPR=$(yq eval '.schedule_expression // ""' "$CONFIG_FILE")
             S3_BUCKET=$(yq eval '.s3_bucket_arn // ""' "$CONFIG_FILE")
           else
@@ -138,6 +147,8 @@ jobs:
             TTL="7d"
             CONTAINER_IMAGE="nginx:alpine"
             CONTAINER_PORT="80"
+            DOCKERFILE=""
+            BUILD_CONTEXT="."
             SCHEDULE_EXPR=""
             S3_BUCKET=""
           fi
@@ -146,6 +157,8 @@ jobs:
           echo "ttl=${TTL}" >> "$GITHUB_OUTPUT"
           echo "container_image=${CONTAINER_IMAGE}" >> "$GITHUB_OUTPUT"
           echo "container_port=${CONTAINER_PORT}" >> "$GITHUB_OUTPUT"
+          echo "dockerfile=${DOCKERFILE}" >> "$GITHUB_OUTPUT"
+          echo "build_context=${BUILD_CONTEXT}" >> "$GITHUB_OUTPUT"
           echo "schedule_expression=${SCHEDULE_EXPR}" >> "$GITHUB_OUTPUT"
           echo "s3_bucket_arn=${S3_BUCKET}" >> "$GITHUB_OUTPUT"
           echo "owner=${{ github.actor }}@users.noreply.github.com" >> "$GITHUB_OUTPUT"
@@ -155,6 +168,8 @@ jobs:
           echo "  TTL: ${TTL}"
           echo "  Image: ${CONTAINER_IMAGE}"
           echo "  Port: ${CONTAINER_PORT}"
+          echo "  Dockerfile: ${DOCKERFILE:-auto-detect}"
+          echo "  Build context: ${BUILD_CONTEXT}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -199,11 +214,108 @@ jobs:
           echo "Action: provision (new environment)"
 
   # -----------------------------------------------------------------
-  # Job 2: Provision — create new preview environment
+  # Job 2: Build Image — build and push Docker image to ECR
+  # -----------------------------------------------------------------
+  build-image:
+    name: Build Image
+    needs: setup
+    if: needs.setup.outputs.action == 'provision' || needs.setup.outputs.action == 'extend'
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      container_image: ${{ steps.resolve.outputs.container_image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine if Dockerfile exists
+        id: check
+        run: |
+          set -euo pipefail
+          DOCKERFILE="${{ needs.setup.outputs.dockerfile }}"
+
+          # If dockerfile is explicitly set in config, use that path
+          if [[ -n "$DOCKERFILE" ]]; then
+            if [[ -f "$DOCKERFILE" ]]; then
+              echo "has_dockerfile=true" >> "$GITHUB_OUTPUT"
+              echo "dockerfile_path=${DOCKERFILE}" >> "$GITHUB_OUTPUT"
+              echo "Found Dockerfile at configured path: ${DOCKERFILE}"
+            else
+              echo "::error::Configured dockerfile '${DOCKERFILE}' not found"
+              exit 1
+            fi
+          # Otherwise, check for Dockerfile at repo root
+          elif [[ -f "Dockerfile" ]]; then
+            echo "has_dockerfile=true" >> "$GITHUB_OUTPUT"
+            echo "dockerfile_path=Dockerfile" >> "$GITHUB_OUTPUT"
+            echo "Found Dockerfile at repo root"
+          else
+            echo "has_dockerfile=false" >> "$GITHUB_OUTPUT"
+            echo "No Dockerfile found, will use container_image from config"
+          fi
+
+      - name: Configure AWS credentials
+        if: steps.check.outputs.has_dockerfile == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: steps.check.outputs.has_dockerfile == 'true'
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        if: steps.check.outputs.has_dockerfile == 'true'
+        id: build
+        run: |
+          set -euo pipefail
+
+          ECR_REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          ECR_REPO="mini-idp-preview"
+          ENV_NAME="${{ needs.setup.outputs.environment_name }}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          IMAGE_TAG="${ENV_NAME}-${SHORT_SHA}"
+          FULL_IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
+
+          BUILD_CONTEXT="${{ needs.setup.outputs.build_context }}"
+          DOCKERFILE="${{ steps.check.outputs.dockerfile_path }}"
+
+          echo "Building image: ${FULL_IMAGE}"
+          echo "  Dockerfile: ${DOCKERFILE}"
+          echo "  Context: ${BUILD_CONTEXT}"
+
+          docker build \
+            -t "${FULL_IMAGE}" \
+            -f "${DOCKERFILE}" \
+            --label "idp.environment=${ENV_NAME}" \
+            --label "idp.commit=${{ github.sha }}" \
+            --label "idp.branch=${{ github.ref_name }}" \
+            "${BUILD_CONTEXT}"
+
+          docker push "${FULL_IMAGE}"
+
+          echo "image_uri=${FULL_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "Image pushed: ${FULL_IMAGE}"
+
+      - name: Resolve final container image
+        id: resolve
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.check.outputs.has_dockerfile }}" == "true" ]]; then
+            echo "container_image=${{ steps.build.outputs.image_uri }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "container_image=${{ needs.setup.outputs.container_image }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # -----------------------------------------------------------------
+  # Job 3: Provision — create new preview environment
   # -----------------------------------------------------------------
   provision:
     name: Provision Preview
-    needs: setup
+    needs: [setup, build-image]
     if: needs.setup.outputs.action == 'provision'
     uses: ./.github/workflows/provision.yml
     with:
@@ -211,6 +323,8 @@ jobs:
       environment_name: ${{ needs.setup.outputs.environment_name }}
       owner: ${{ needs.setup.outputs.owner }}
       ttl: ${{ needs.setup.outputs.ttl }}
+      container_image: ${{ needs.build-image.outputs.container_image }}
+      container_port: ${{ needs.setup.outputs.container_port }}
       schedule_expression: ${{ needs.setup.outputs.schedule_expression }}
       s3_bucket_arn: ${{ needs.setup.outputs.s3_bucket_arn }}
       acm_certificate_arn: ${{ vars.PREVIEW_ACM_CERT_ARN }}
@@ -219,56 +333,29 @@ jobs:
     secrets: inherit
 
   # -----------------------------------------------------------------
-  # Job 3: Extend — update TTL for existing preview environment
+  # Job 4: Extend & Redeploy — update TTL and deploy latest code
   # -----------------------------------------------------------------
   extend:
-    name: Extend TTL
-    needs: setup
+    name: Extend & Redeploy
+    needs: [setup, build-image]
     if: needs.setup.outputs.action == 'extend'
-    runs-on: ubuntu-latest
-    environment: production
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Extend environment TTL
-        run: |
-          set -euo pipefail
-
-          ENV_NAME="${{ needs.setup.outputs.environment_name }}"
-          TTL_RAW="${{ needs.setup.outputs.ttl }}"
-
-          # Parse TTL
-          if [[ "$TTL_RAW" =~ ^([0-9]+)d$ ]]; then
-            TTL_SECONDS=$(( ${BASH_REMATCH[1]} * 86400 ))
-          elif [[ "$TTL_RAW" =~ ^([0-9]+)h$ ]]; then
-            TTL_SECONDS=$(( ${BASH_REMATCH[1]} * 3600 ))
-          else
-            echo "::error::Invalid TTL format: $TTL_RAW"
-            exit 1
-          fi
-
-          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          EXPIRES_AT=$(date -u -d "${NOW} + ${TTL_SECONDS} seconds" +"%Y-%m-%dT%H:%M:%SZ")
-
-          # Download, update, and re-upload metadata
-          METADATA_KEY="environments/${ENV_NAME}/metadata.json"
-          aws s3 cp "s3://${STATE_BUCKET}/${METADATA_KEY}" /tmp/metadata.json
-
-          jq --arg exp "${EXPIRES_AT}" '.expires_at = $exp' /tmp/metadata.json > /tmp/updated-metadata.json
-
-          aws s3 cp /tmp/updated-metadata.json \
-            "s3://${STATE_BUCKET}/${METADATA_KEY}" \
-            --content-type "application/json"
-
-          echo "Extended TTL to ${EXPIRES_AT}"
+    uses: ./.github/workflows/provision.yml
+    with:
+      template: ${{ needs.setup.outputs.template }}
+      environment_name: ${{ needs.setup.outputs.environment_name }}
+      owner: ${{ needs.setup.outputs.owner }}
+      ttl: ${{ needs.setup.outputs.ttl }}
+      container_image: ${{ needs.build-image.outputs.container_image }}
+      container_port: ${{ needs.setup.outputs.container_port }}
+      schedule_expression: ${{ needs.setup.outputs.schedule_expression }}
+      s3_bucket_arn: ${{ needs.setup.outputs.s3_bucket_arn }}
+      acm_certificate_arn: ${{ vars.PREVIEW_ACM_CERT_ARN }}
+      route53_zone_id: ${{ vars.PREVIEW_ZONE_ID }}
+      preview_domain: ${{ vars.PREVIEW_DOMAIN }}
+    secrets: inherit
 
   # -----------------------------------------------------------------
-  # Job 4: Destroy — tear down preview environment
+  # Job 5: Destroy — tear down preview environment
   # -----------------------------------------------------------------
   destroy:
     name: Destroy Preview
@@ -280,7 +367,7 @@ jobs:
     secrets: inherit
 
   # -----------------------------------------------------------------
-  # Job 5: Comment — post preview URL on associated PR
+  # Job 6: Comment — post preview URL on associated PR
   # -----------------------------------------------------------------
   comment:
     name: Comment on PR
@@ -376,3 +463,17 @@ jobs:
               --repo "${{ github.repository }}" \
               --body "${COMMENT_BODY}"
           fi
+
+  # -----------------------------------------------------------------
+  # Job 7: Dashboard — update ENVIRONMENTS.md on main
+  # -----------------------------------------------------------------
+  dashboard:
+    name: Update Dashboard
+    needs: [setup, provision, extend, destroy]
+    if: |
+      always() &&
+      (needs.provision.result == 'success' ||
+       needs.extend.result == 'success' ||
+       needs.destroy.result == 'success')
+    uses: ./.github/workflows/update-dashboard.yml
+    secrets: inherit

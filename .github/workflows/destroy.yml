@@ -106,6 +106,12 @@ jobs:
           EOF
             fi
 
+            # Container image (if a custom image was deployed)
+            CONTAINER_IMAGE=$(jq -r '.container_image // ""' metadata.json)
+            if [[ -n "$CONTAINER_IMAGE" && "$CONTAINER_IMAGE" != "nginx:alpine" ]]; then
+              echo "container_image = \"${CONTAINER_IMAGE}\"" >> "${TFVARS_FILE}"
+            fi
+
             sed -i 's/^          //' "${TFVARS_FILE}"
           fi
 
@@ -129,3 +135,34 @@ jobs:
         run: |
           set -euo pipefail
           aws s3 rm "s3://${STATE_BUCKET}/environments/${{ inputs.environment_name }}/" --recursive
+
+      - name: Clean up ECR images
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+
+          ENV_NAME="${{ inputs.environment_name }}"
+          ECR_REPO="mini-idp-preview"
+
+          echo "Cleaning up ECR images tagged with '${ENV_NAME}-*'..."
+
+          # List images matching this environment's tag prefix
+          IMAGE_IDS=$(aws ecr list-images \
+            --repository-name "${ECR_REPO}" \
+            --filter tagStatus=TAGGED \
+            --query "imageIds[?starts_with(imageTag, '${ENV_NAME}-')]" \
+            --output json 2>/dev/null || echo "[]")
+
+          if [[ "$IMAGE_IDS" == "[]" || -z "$IMAGE_IDS" ]]; then
+            echo "No ECR images found for environment '${ENV_NAME}'."
+            exit 0
+          fi
+
+          IMAGE_COUNT=$(echo "$IMAGE_IDS" | jq 'length')
+          echo "Found ${IMAGE_COUNT} image(s) to delete."
+
+          aws ecr batch-delete-image \
+            --repository-name "${ECR_REPO}" \
+            --image-ids "$IMAGE_IDS"
+
+          echo "ECR images cleaned up successfully."

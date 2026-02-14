@@ -19,6 +19,12 @@ container_port: 80
 # Extended automatically on every push to the branch.
 ttl: 7d
 
+# Docker build configuration
+# If a Dockerfile is found, the image is built, pushed to ECR, and deployed.
+# If no Dockerfile exists, container_image above is used as-is.
+# dockerfile: Dockerfile       # Path to Dockerfile (default: auto-detect at repo root)
+# build_context: .              # Docker build context directory (default: repo root)
+
 # Scheduled task configuration (scheduled-worker template only)
 # schedule_expression: "rate(1 hour)"
 # s3_bucket_arn: "arn:aws:s3:::my-bucket"

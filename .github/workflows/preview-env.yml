@@ -386,7 +386,7 @@ jobs:
     name: Provision Preview
     needs: [setup, build-image]
     if: needs.setup.outputs.action == 'provision'
-    uses: ./.github/workflows/provision.yml
+    uses: AnerSarid/mini-idp/.github/workflows/provision.yml@main
     with:
       template: ${{ needs.setup.outputs.template }}
       environment_name: ${{ needs.setup.outputs.environment_name }}
@@ -413,7 +413,7 @@ jobs:
     name: Extend & Redeploy
     needs: [setup, build-image]
     if: needs.setup.outputs.action == 'extend'
-    uses: ./.github/workflows/provision.yml
+    uses: AnerSarid/mini-idp/.github/workflows/provision.yml@main
     with:
       template: ${{ needs.setup.outputs.template }}
       environment_name: ${{ needs.setup.outputs.environment_name }}
@@ -440,7 +440,7 @@ jobs:
     name: Destroy Preview
     needs: setup
     if: needs.setup.outputs.action == 'destroy'
-    uses: ./.github/workflows/destroy.yml
+    uses: AnerSarid/mini-idp/.github/workflows/destroy.yml@main
     with:
       environment_name: ${{ needs.setup.outputs.environment_name }}
     secrets: inherit
@@ -554,5 +554,5 @@ jobs:
       (needs.provision.result == 'success' ||
        needs.extend.result == 'success' ||
        needs.destroy.result == 'success')
-    uses: ./.github/workflows/update-dashboard.yml
+    uses: AnerSarid/mini-idp/.github/workflows/update-dashboard.yml@main
     secrets: inherit

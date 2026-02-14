@@ -97,7 +97,7 @@ resource "aws_db_instance" "this" {
   identifier = "${local.prefix}-postgres"
 
   engine         = "postgres"
-  engine_version = "16.4"
+  engine_version = "16.12"
   instance_class = var.instance_class
 
   allocated_storage = var.allocated_storage

@@ -4,14 +4,7 @@ import ora from 'ora';
 import dayjs from 'dayjs';
 import { requireAuth } from '../lib/config.js';
 import { getEnvironment, updateEnvironmentMetadata } from '../lib/environments.js';
-
-const TTL_REGEX = /^\d+[dh]$/;
-
-function parseTtl(ttl: string): { value: number; unit: 'day' | 'hour' } {
-  const value = parseInt(ttl.slice(0, -1), 10);
-  const unit = ttl.slice(-1) === 'd' ? 'day' as const : 'hour' as const;
-  return { value, unit };
-}
+import { parseTtl, validateTtl } from '../lib/ttl.js';
 
 export function registerExtendCommand(program: Command): void {
   program
@@ -22,12 +15,7 @@ export function registerExtendCommand(program: Command): void {
       try {
         requireAuth();
 
-        if (!TTL_REGEX.test(opts.ttl)) {
-          process.stderr.write(
-            chalk.red('TTL must be a number followed by d (days) or h (hours).\n')
-          );
-          process.exit(1);
-        }
+        validateTtl(opts.ttl);
 
         const spinner = ora('Fetching environment...').start();
         let env;
@@ -50,9 +38,16 @@ export function registerExtendCommand(program: Command): void {
         process.stdout.write(`New expiry:     ${chalk.green(newExpiry.format('YYYY-MM-DD HH:mm'))}\n\n`);
 
         const updateSpinner = ora('Updating expiry...').start();
+        // Compute the effective TTL from creation to new expiry (the actual total lifetime)
+        const createdAt = dayjs(env.metadata.created_at);
+        const totalHours = newExpiry.diff(createdAt, 'hour');
+        const effectiveTtl = totalHours >= 24 && totalHours % 24 === 0
+          ? `${totalHours / 24}d`
+          : `${totalHours}h`;
         const updatedMetadata = {
           ...env.metadata,
           expires_at: newExpiry.toISOString(),
+          ttl: effectiveTtl,
         };
         await updateEnvironmentMetadata(name, updatedMetadata);
         updateSpinner.succeed('Expiry updated');

@@ -99,6 +99,17 @@ variable "secret_variables" {
   default     = {}
 }
 
+variable "container_insights" {
+  description = "Whether to enable CloudWatch Container Insights on the ECS cluster (\"enabled\" or \"disabled\")"
+  type        = string
+  default     = "enabled"
+
+  validation {
+    condition     = contains(["enabled", "disabled"], var.container_insights)
+    error_message = "container_insights must be \"enabled\" or \"disabled\"."
+  }
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

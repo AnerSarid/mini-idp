@@ -5,6 +5,7 @@ import dayjs from 'dayjs';
 import { requireAuth } from '../lib/config.js';
 import { triggerWorkflow, waitForWorkflowCompletion } from '../lib/github.js';
 import { environmentExists, getEnvironment } from '../lib/environments.js';
+import { parseTtl, validateTtl } from '../lib/ttl.js';
 import * as readline from 'readline';
 
 const TEMPLATES = ['api-service', 'api-database', 'scheduled-worker'] as const;
@@ -17,7 +18,6 @@ const COST_ESTIMATES: Record<Template, string> = {
 };
 
 const NAME_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
-const TTL_REGEX = /^\d+[dh]$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function validateName(name: string): string {
@@ -35,13 +35,6 @@ function validateName(name: string): string {
   return name;
 }
 
-function validateTtl(ttl: string): string {
-  if (!TTL_REGEX.test(ttl)) {
-    throw new Error('TTL must be a number followed by d (days) or h (hours). Example: 7d, 24h');
-  }
-  return ttl;
-}
-
 function validateOwner(owner: string): string {
   if (!EMAIL_REGEX.test(owner)) {
     throw new Error('Owner must be a valid email address.');
@@ -49,19 +42,9 @@ function validateOwner(owner: string): string {
   return owner;
 }
 
-function parseTtl(ttl: string): { value: number; unit: string } {
-  const value = parseInt(ttl.slice(0, -1), 10);
-  const unit = ttl.slice(-1);
-  return { value, unit };
-}
-
 function computeExpiry(ttl: string): string {
   const { value, unit } = parseTtl(ttl);
-  const now = dayjs();
-  if (unit === 'd') {
-    return now.add(value, 'day').toISOString();
-  }
-  return now.add(value, 'hour').toISOString();
+  return dayjs().add(value, unit).toISOString();
 }
 
 function prompt(question: string): Promise<string> {

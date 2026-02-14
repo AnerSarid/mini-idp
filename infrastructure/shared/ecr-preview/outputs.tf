@@ -14,6 +14,6 @@ output "repository_name" {
 }
 
 output "pull_through_cache_prefix" {
-  description = "ECR prefix for Docker Hub pull-through cache (e.g. docker-hub)"
-  value       = aws_ecr_pull_through_cache_rule.docker_hub.ecr_repository_prefix
+  description = "ECR prefix for Docker Hub pull-through cache (e.g. docker-hub). Empty if not configured."
+  value       = length(aws_ecr_pull_through_cache_rule.docker_hub) > 0 ? aws_ecr_pull_through_cache_rule.docker_hub[0].ecr_repository_prefix : ""
 }

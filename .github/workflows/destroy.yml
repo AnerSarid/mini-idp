@@ -20,8 +20,10 @@ permissions:
   contents: read
 
 env:
-  STATE_BUCKET: mini-idp-terraform-state
-  AWS_REGION: us-east-1
+  STATE_BUCKET: ${{ vars.STATE_BUCKET }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  LOCK_TABLE: ${{ vars.LOCK_TABLE }}
+  ECR_REPO: ${{ vars.ECR_REPO }}
 
 jobs:
   destroy:
@@ -134,6 +136,9 @@ jobs:
         working-directory: infrastructure/templates/${{ steps.metadata.outputs.template }}
         run: |
           tofu init -input=false \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="dynamodb_table=${LOCK_TABLE}" \
             -backend-config="key=environments/${{ inputs.environment_name }}/terraform.tfstate"
 
       - name: Tofu destroy
@@ -156,7 +161,6 @@ jobs:
           set -euo pipefail
 
           ENV_NAME="${{ inputs.environment_name }}"
-          ECR_REPO="mini-idp-preview"
 
           echo "Cleaning up ECR images tagged with '${ENV_NAME}-*'..."
 

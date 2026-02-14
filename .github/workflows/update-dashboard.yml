@@ -19,8 +19,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  STATE_BUCKET: mini-idp-terraform-state
-  AWS_REGION: us-east-1
+  STATE_BUCKET: ${{ vars.STATE_BUCKET }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
 
 jobs:
   dashboard:

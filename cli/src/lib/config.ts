@@ -9,6 +9,8 @@ interface IdpConfig {
   aws: {
     region: string;
     stateBucket: string;
+    lockTable: string;
+    ecrRepo: string;
   };
 }
 
@@ -23,6 +25,8 @@ const config = new Conf<IdpConfig>({
     aws: {
       region: 'us-east-1',
       stateBucket: 'mini-idp-terraform-state',
+      lockTable: 'mini-idp-terraform-locks',
+      ecrRepo: 'mini-idp-preview',
     },
   },
 });
@@ -32,7 +36,9 @@ type ConfigPath =
   | 'github.owner'
   | 'github.repo'
   | 'aws.region'
-  | 'aws.stateBucket';
+  | 'aws.stateBucket'
+  | 'aws.lockTable'
+  | 'aws.ecrRepo';
 
 export function getConfig(): IdpConfig {
   return {

@@ -7,8 +7,13 @@ import { DynamoDBClient, GetItemCommand, DeleteItemCommand } from '@aws-sdk/clie
 import { getConfigValue } from '../lib/config.js';
 import * as readline from 'readline';
 
-const LOCK_TABLE = 'mini-idp-terraform-locks';
-const STATE_BUCKET = 'mini-idp-terraform-state';
+function getLockTable(): string {
+  return getConfigValue('aws.lockTable');
+}
+
+function getStateBucket(): string {
+  return getConfigValue('aws.stateBucket');
+}
 
 function prompt(question: string): Promise<string> {
   const rl = readline.createInterface({
@@ -32,7 +37,7 @@ function getDynamoClient(): DynamoDBClient {
  * Terraform's S3 backend uses the format: <bucket>/<key>
  */
 function buildLockId(environmentName: string): string {
-  return `${STATE_BUCKET}/environments/${environmentName}/terraform.tfstate`;
+  return `${getStateBucket()}/environments/${environmentName}/terraform.tfstate`;
 }
 
 export function registerUnlockCommand(program: Command): void {
@@ -64,7 +69,7 @@ export function registerUnlockCommand(program: Command): void {
         const checkSpinner = ora('Checking for state lock...').start();
         const getResult = await client.send(
           new GetItemCommand({
-            TableName: LOCK_TABLE,
+            TableName: getLockTable(),
             Key: { LockID: { S: lockId } },
           })
         );
@@ -116,7 +121,7 @@ export function registerUnlockCommand(program: Command): void {
         const unlockSpinner = ora('Removing state lock...').start();
         await client.send(
           new DeleteItemCommand({
-            TableName: LOCK_TABLE,
+            TableName: getLockTable(),
             Key: { LockID: { S: lockId } },
           })
         );

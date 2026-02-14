@@ -1,12 +1,10 @@
 terraform {
   required_version = ">= 1.6.0"
 
+  # Backend values are provided via -backend-config flags or backend.conf file.
+  # Run: tofu init -backend-config=../../backend.conf
   backend "s3" {
-    bucket         = "mini-idp-terraform-state"
-    key            = "shared/ecr-preview/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "mini-idp-terraform-locks"
-    encrypt        = true
+    key = "shared/ecr-preview/terraform.tfstate"
   }
 
   required_providers {
@@ -35,7 +33,7 @@ provider "aws" {
 ################################################################################
 
 resource "aws_ecr_repository" "preview" {
-  name                 = "mini-idp-preview"
+  name                 = var.ecr_repo_name
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 
@@ -44,7 +42,7 @@ resource "aws_ecr_repository" "preview" {
   }
 
   tags = {
-    Name = "mini-idp-preview"
+    Name = var.ecr_repo_name
   }
 }
 

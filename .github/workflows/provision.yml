@@ -170,8 +170,9 @@ permissions:
   contents: read
 
 env:
-  STATE_BUCKET: mini-idp-terraform-state
-  AWS_REGION: us-east-1
+  STATE_BUCKET: ${{ vars.STATE_BUCKET }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  LOCK_TABLE: ${{ vars.LOCK_TABLE }}
 
 jobs:
   provision:
@@ -365,6 +366,9 @@ jobs:
         working-directory: infrastructure/templates/${{ inputs.template }}
         run: |
           tofu init -input=false \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="dynamodb_table=${LOCK_TABLE}" \
             -backend-config="key=environments/${{ inputs.environment_name }}/terraform.tfstate"
 
       - name: Tofu plan

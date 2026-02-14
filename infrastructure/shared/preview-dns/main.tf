@@ -1,12 +1,10 @@
 terraform {
   required_version = ">= 1.6.0"
 
+  # Backend values are provided via -backend-config flags or backend.conf file.
+  # Run: tofu init -backend-config=../../backend.conf
   backend "s3" {
-    bucket         = "mini-idp-terraform-state"
-    key            = "shared/preview-dns/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "mini-idp-terraform-locks"
-    encrypt        = true
+    key = "shared/preview-dns/terraform.tfstate"
   }
 
   required_providers {

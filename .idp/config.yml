@@ -27,9 +27,10 @@ ttl: 7d
 
 # Environment variables injected into the container at launch.
 # These are plain-text values suitable for non-sensitive configuration.
-# environment:
-#   NODE_ENV: preview
-#   LOG_LEVEL: debug
+environment:
+  IDP_APP_NAME: mini-idp-test
+  IDP_ENV: preview
+  LOG_LEVEL: debug
 
 # Secrets from AWS Secrets Manager injected as container env vars at launch.
 # Use the full ARN:json-key::  format (ECS valueFrom syntax).

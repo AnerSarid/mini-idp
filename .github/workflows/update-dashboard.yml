@@ -186,14 +186,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add ENVIRONMENTS.md
-
-          # No-op if nothing changed
-          if git diff --cached --quiet; then
-            echo "No changes to ENVIRONMENTS.md, skipping commit."
+          # Only commit if meaningful content changed (ignore timestamp-only diffs).
+          # The "Last updated" line changes every run — strip it before comparing.
+          if git diff ENVIRONMENTS.md | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v 'Last updated' | grep -qv '^$'; then
+            echo "ENVIRONMENTS.md has meaningful changes, committing."
+          else
+            echo "Only timestamp changed in ENVIRONMENTS.md, skipping commit."
             exit 0
           fi
 
+          git add ENVIRONMENTS.md
           git commit -m "docs: update ENVIRONMENTS.md [skip ci]"
 
           # Retry push with rebase (handles concurrent dashboard updates)

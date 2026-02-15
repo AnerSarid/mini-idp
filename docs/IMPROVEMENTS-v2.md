@@ -35,24 +35,20 @@ For context, here's what was implemented across the sessions that followed the o
 
 ### CLI housekeeping
 
-**1. Duplicate TTL parsing** (v1 #17)
-`parseTtl()` is copy-pasted in both `create.ts` and `extend.ts`. Extract to `cli/src/lib/ttl.ts`.
-Effort: 15 minutes. No functional change.
+**1. Duplicate TTL parsing** (v1 #17) — **Done**
+Extracted to shared utility `cli/src/lib/ttl.ts` with `validateTtl()` and `parseTtl()`. Both `create.ts` and `extend.ts` import from the shared module.
 
 **2. GitHub PAT in plain text** (v1 #9)
 `Conf` stores tokens to `%APPDATA%` as JSON. Use `keytar` or native OS credential store.
 Effort: 1-2 hours.
 
-**3. Extend command metadata** (v1 #8)
-When extending, the `ttl` metadata field gets overwritten with the extension duration instead of reflecting the actual total lifetime. The `created_at` + `expires_at` pair is the source of truth, so `ttl` is misleading after an extend.
-Fix: stop writing `ttl` during extend, or compute it from `expires_at - created_at`.
-Effort: 15 minutes.
+**3. Extend command metadata** (v1 #8) — **Partially fixed**
+The extend command now computes `ttl` as the total lifetime from `created_at` to new `expires_at`, rather than blindly overwriting with the extension amount. Still writes the `ttl` field (which could be dropped entirely since `created_at` + `expires_at` are the source of truth).
 
 ### Infrastructure polish
 
-**4. Container Insights inconsistency** (v1 #15)
-`ecs-service` has Insights enabled; `scheduled-task` has it disabled. Make it a variable defaulting to `enabled` on both.
-Effort: 10 minutes.
+**4. Container Insights inconsistency** (v1 #15) — **Done**
+Both `ecs-service` and `scheduled-task` modules now have a `container_insights` variable defaulting to `"enabled"`.
 
 **5. Workflow input validation** (v1 #19) — **Done**
 Input validation step added to provision.yml: environment names, TTL formats, template names, port numbers, and schedule expressions are all validated before Terraform runs.
@@ -242,6 +238,8 @@ Start with layer 1 (visibility). Don't build layers 3-4 until there's real multi
 ## Status Summary
 
 ### Completed
+- #1 Duplicate TTL parsing — shared `cli/src/lib/ttl.ts` utility ✅
+- #4 Container Insights — both modules default to `"enabled"` ✅
 - #5 Workflow input validation ✅
 - #6 Terraform state lock cleanup (`idp unlock`) ✅
 - #9 Real application E2E test (api-service + api-database cross-repo) ✅
@@ -253,13 +251,13 @@ Start with layer 1 (visibility). Don't build layers 3-4 until there's real multi
 - #16 Parameterize hardcoded values ✅
 
 ### Remaining
-- #1 Duplicate TTL parsing — extract to shared utility
 - #2 GitHub PAT in plain text — use OS credential store
-- #3 Extend command metadata — stop overwriting `ttl` field
-- #4 Container Insights inconsistency
+- #3 Extend command metadata — partially fixed (computes total lifetime, but still writes `ttl` field)
 - #7 **Shared networking** — biggest cost and speed win
 - #8 **Health check path** — unblocks non-root-handler apps
 - #12 ALB access logs
+- #17 NAT gateway HA option
+- #18 VPC flow logs
 
 ### Recommended next priorities
 1. **Shared networking** (#7) — drops provision time from ~4 min to ~90s, saves ~$33/mo per environment

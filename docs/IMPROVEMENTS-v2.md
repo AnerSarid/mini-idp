@@ -62,14 +62,16 @@ Input validation step added to provision.yml: environment names, TTL formats, te
 
 ### High priority
 
-**7. Shared networking**
-Today each environment creates its own VPC, subnets, NAT gateway, and internet gateway. This is the biggest cost driver (~$1.10/day for NAT alone) and the biggest contributor to provision time (~2.5 of the 4 minutes).
+**7. Shared networking** — **Done**
+Optional shared VPC toggle (`use_shared_networking`) implemented across all templates. When enabled, environments skip per-env VPC/NAT/IGW creation and look up a pre-deployed shared VPC via `terraform_remote_state`. Default is `false` — existing per-env behavior preserved.
 
-Fix: create a shared VPC in `infrastructure/shared/networking/` (one-time) with enough subnets for many environments. Templates take `vpc_id`, `public_subnet_ids`, `private_subnet_ids` as inputs instead of creating them. The networking module becomes optional ("bring your own VPC" pattern).
+Implementation:
+- Shared VPC module: `infrastructure/shared/preview-networking/` (deploy once, reuse across envs)
+- Templates use `count` on networking module + `locals` to abstract over both per-env and shared sources
+- Toggle controlled via `.idp/config.yml`, repo variable `USE_SHARED_NETWORKING`, or workflow input
+- Tested E2E: provision (30 resources, no networking), extend, destroy — shared VPC untouched
 
-Impact: provision time drops from ~4 min to ~90 seconds. Cost per environment drops significantly (no per-env NAT/IGW). The trade-off is environments share a network — acceptable for dev/preview, not for production isolation.
-
-Effort: medium (half day). The module boundary already exists; it's a matter of making it optional and adding the shared VPC Terraform.
+Impact: provision time drops from ~4 min to ~90 seconds (dominated by RDS for api-database; api-service would be faster). Per-env NAT cost ($1.10/day) eliminated. Shared VPC costs ~$1.10/day regardless of environment count — only worth deploying when running multiple concurrent environments.
 
 **8. Health check configuration**
 Health check path is hardcoded to `/` in the ALB target group. Any app without a root handler (e.g. an API on `/api/health`) gets constant 404s and never becomes healthy.
@@ -249,18 +251,17 @@ Start with layer 1 (visibility). Don't build layers 3-4 until there's real multi
 - #14 ECR pull-through cache ✅
 - #15 ECS deployment circuit breaker ✅
 - #16 Parameterize hardcoded values ✅
+- #7 Shared networking (optional toggle, `terraform_remote_state` lookup) ✅
 
 ### Remaining
 - #2 GitHub PAT in plain text — use OS credential store
 - #3 Extend command metadata — partially fixed (computes total lifetime, but still writes `ttl` field)
-- #7 **Shared networking** — biggest cost and speed win
 - #8 **Health check path** — unblocks non-root-handler apps
 - #12 ALB access logs
 - #17 NAT gateway HA option
 - #18 VPC flow logs
 
 ### Recommended next priorities
-1. **Shared networking** (#7) — drops provision time from ~4 min to ~90s, saves ~$33/mo per environment
-2. **Health check path** (#8) — quick win, unblocks real-world apps
-3. **Template ecosystem** (Evolution II) — enable team self-service
-4. **Cost visibility** (Evolution IV) — `idp cost` command
+1. **Health check path** (#8) — quick win, unblocks real-world apps
+2. **Template ecosystem** (Evolution II) — enable team self-service
+3. **Cost visibility** (Evolution IV) — `idp cost` command

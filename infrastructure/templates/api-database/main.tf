@@ -40,11 +40,29 @@ locals {
   }
 }
 
-# --- Networking ---
+# --- Networking (per-env or shared) ---
 module "networking" {
+  count            = var.use_shared_networking ? 0 : 1
   source           = "../../modules/networking"
   environment_name = var.environment_name
   tags             = local.tags
+}
+
+data "terraform_remote_state" "shared_networking" {
+  count   = var.use_shared_networking ? 1 : 0
+  backend = "s3"
+
+  config = {
+    bucket = var.state_bucket
+    key    = "shared/preview-networking/terraform.tfstate"
+    region = var.aws_region
+  }
+}
+
+locals {
+  vpc_id             = var.use_shared_networking ? data.terraform_remote_state.shared_networking[0].outputs.vpc_id : module.networking[0].vpc_id
+  public_subnet_ids  = var.use_shared_networking ? data.terraform_remote_state.shared_networking[0].outputs.public_subnet_ids : module.networking[0].public_subnet_ids
+  private_subnet_ids = var.use_shared_networking ? data.terraform_remote_state.shared_networking[0].outputs.private_subnet_ids : module.networking[0].private_subnet_ids
 }
 
 # --- Common (IAM, Logs, Secrets) ---
@@ -59,9 +77,9 @@ module "common" {
 module "ecs_service" {
   source                 = "../../modules/ecs-service"
   environment_name       = var.environment_name
-  vpc_id                 = module.networking.vpc_id
-  public_subnet_ids      = module.networking.public_subnet_ids
-  private_subnet_ids     = module.networking.private_subnet_ids
+  vpc_id                 = local.vpc_id
+  public_subnet_ids      = local.public_subnet_ids
+  private_subnet_ids     = local.private_subnet_ids
   task_execution_role_arn = module.common.task_execution_role_arn
   task_role_arn          = module.common.task_role_arn
   log_group_name         = module.common.log_group_name
@@ -109,8 +127,8 @@ resource "aws_iam_role_policy" "exec_read_db_secret" {
 module "rds" {
   source                    = "../../modules/rds-postgres"
   environment_name          = var.environment_name
-  vpc_id                    = module.networking.vpc_id
-  private_subnet_ids        = module.networking.private_subnet_ids
+  vpc_id                    = local.vpc_id
+  private_subnet_ids        = local.private_subnet_ids
   allowed_security_group_id = module.ecs_service.ecs_security_group_id
   db_name                   = var.db_name
   tags                      = local.tags

@@ -95,3 +95,15 @@ variable "secret_variables" {
   type        = map(string)
   default     = {}
 }
+
+variable "use_shared_networking" {
+  description = "Use shared preview VPC instead of creating a per-environment VPC"
+  type        = bool
+  default     = false
+}
+
+variable "state_bucket" {
+  description = "S3 bucket for Terraform state (needed for shared networking lookup)"
+  type        = string
+  default     = ""
+}

@@ -25,5 +25,5 @@ output "secret_arn" {
 
 output "vpc_id" {
   description = "VPC ID"
-  value       = module.networking.vpc_id
+  value       = local.vpc_id
 }

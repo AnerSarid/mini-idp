@@ -127,6 +127,13 @@ jobs:
               echo "container_image = \"${CONTAINER_IMAGE}\"" >> "${TFVARS_FILE}"
             fi
 
+            # Shared networking (if used during provisioning)
+            USE_SHARED=$(jq -r '.use_shared_networking // "false"' metadata.json)
+            if [[ "$USE_SHARED" == "true" ]]; then
+              echo 'use_shared_networking = true' >> "${TFVARS_FILE}"
+              echo "state_bucket          = \"${STATE_BUCKET}\"" >> "${TFVARS_FILE}"
+            fi
+
             sed -i 's/^          //' "${TFVARS_FILE}"
           fi
 

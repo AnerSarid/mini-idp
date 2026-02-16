@@ -84,6 +84,11 @@ on:
         required: false
         type: string
         default: "{}"
+      use_shared_networking:
+        description: "Use shared VPC instead of per-environment VPC"
+        required: false
+        type: boolean
+        default: false
 
   workflow_call:
     inputs:
@@ -164,6 +169,11 @@ on:
         required: false
         type: string
         default: "{}"
+      use_shared_networking:
+        description: "Use shared VPC instead of per-environment VPC"
+        required: false
+        type: string
+        default: "false"
 
 permissions:
   id-token: write
@@ -355,6 +365,12 @@ jobs:
             echo "}" >> "${TFVARS_FILE}"
           fi
 
+          # Shared networking
+          if [[ "${{ inputs.use_shared_networking }}" == "true" ]]; then
+            echo 'use_shared_networking = true' >> "${TFVARS_FILE}"
+            echo "state_bucket          = \"${STATE_BUCKET}\"" >> "${TFVARS_FILE}"
+          fi
+
           # Remove leading whitespace from heredoc indentation
           sed -i 's/^          //' "${TFVARS_FILE}"
 
@@ -408,7 +424,8 @@ jobs:
             "container_image": "${{ inputs.container_image }}",
             "acm_certificate_arn": "${{ inputs.acm_certificate_arn }}",
             "route53_zone_id": "${{ inputs.route53_zone_id }}",
-            "preview_domain": "${{ inputs.preview_domain }}"
+            "preview_domain": "${{ inputs.preview_domain }}",
+            "use_shared_networking": "${{ inputs.use_shared_networking }}"
           }
           EOF
           sed -i 's/^          //' metadata.json

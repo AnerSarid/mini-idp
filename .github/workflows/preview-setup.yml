@@ -1,0 +1,348 @@
+# preview-setup.yml - Reusable setup for preview environments
+#
+# Encapsulates all setup logic: branch name sanitization, .idp/config.yml
+# parsing, configuration validation, and action decision (provision/extend/destroy).
+#
+# Called by preview-env.yml. Can be swapped out by consumer repos that need
+# custom setup logic without forking the entire orchestration workflow.
+
+name: Preview Setup
+
+on:
+  workflow_call:
+    inputs:
+      event_name:
+        description: "The triggering event name (push, delete, pull_request)"
+        required: true
+        type: string
+      ref_name:
+        description: "github.ref_name — current branch for push events"
+        required: true
+        type: string
+      event_ref:
+        description: "github.event.ref — branch name for delete events"
+        required: false
+        type: string
+        default: ""
+      pr_head_ref:
+        description: "github.event.pull_request.head.ref — branch for PR events"
+        required: false
+        type: string
+        default: ""
+      actor:
+        description: "github.actor — user who triggered the event"
+        required: true
+        type: string
+      use_shared_networking_default:
+        description: "Default value for use_shared_networking from repo vars"
+        required: false
+        type: string
+        default: ""
+
+    outputs:
+      environment_name:
+        description: "Sanitized environment name"
+        value: ${{ jobs.setup.outputs.environment_name }}
+      action:
+        description: "Action to take: provision, extend, or destroy"
+        value: ${{ jobs.setup.outputs.action }}
+      template:
+        description: "Infrastructure template name"
+        value: ${{ jobs.setup.outputs.template }}
+      ttl:
+        description: "Time-to-live for the environment"
+        value: ${{ jobs.setup.outputs.ttl }}
+      owner:
+        description: "Owner email"
+        value: ${{ jobs.setup.outputs.owner }}
+      container_image:
+        description: "Container image URI"
+        value: ${{ jobs.setup.outputs.container_image }}
+      container_port:
+        description: "Container port"
+        value: ${{ jobs.setup.outputs.container_port }}
+      dockerfile:
+        description: "Path to Dockerfile"
+        value: ${{ jobs.setup.outputs.dockerfile }}
+      build_context:
+        description: "Docker build context path"
+        value: ${{ jobs.setup.outputs.build_context }}
+      environment_variables:
+        description: "JSON-encoded environment variables"
+        value: ${{ jobs.setup.outputs.environment_variables }}
+      secret_variables:
+        description: "JSON-encoded secret variable references"
+        value: ${{ jobs.setup.outputs.secret_variables }}
+      schedule_expression:
+        description: "Schedule expression for scheduled-worker"
+        value: ${{ jobs.setup.outputs.schedule_expression }}
+      s3_bucket_arn:
+        description: "S3 bucket ARN for scheduled-worker"
+        value: ${{ jobs.setup.outputs.s3_bucket_arn }}
+      cpu:
+        description: "CPU units for Fargate task"
+        value: ${{ jobs.setup.outputs.cpu }}
+      memory:
+        description: "Memory in MiB for Fargate task"
+        value: ${{ jobs.setup.outputs.memory }}
+      log_retention_days:
+        description: "CloudWatch log retention in days"
+        value: ${{ jobs.setup.outputs.log_retention_days }}
+      use_shared_networking:
+        description: "Whether to use shared VPC"
+        value: ${{ jobs.setup.outputs.use_shared_networking }}
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  STATE_BUCKET: ${{ vars.STATE_BUCKET }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      environment_name: ${{ steps.sanitize.outputs.environment_name }}
+      action: ${{ steps.decide.outputs.action }}
+      template: ${{ steps.config.outputs.template }}
+      ttl: ${{ steps.config.outputs.ttl }}
+      owner: ${{ steps.config.outputs.owner }}
+      container_image: ${{ steps.config.outputs.container_image }}
+      container_port: ${{ steps.config.outputs.container_port }}
+      dockerfile: ${{ steps.config.outputs.dockerfile }}
+      build_context: ${{ steps.config.outputs.build_context }}
+      environment_variables: ${{ steps.config.outputs.environment_variables }}
+      secret_variables: ${{ steps.config.outputs.secret_variables }}
+      schedule_expression: ${{ steps.config.outputs.schedule_expression }}
+      s3_bucket_arn: ${{ steps.config.outputs.s3_bucket_arn }}
+      cpu: ${{ steps.config.outputs.cpu }}
+      memory: ${{ steps.config.outputs.memory }}
+      log_retention_days: ${{ steps.config.outputs.log_retention_days }}
+      use_shared_networking: ${{ steps.config.outputs.use_shared_networking }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        if: inputs.event_name == 'push'
+
+      - name: Determine branch name
+        id: branch
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ inputs.event_name }}" == "push" ]]; then
+            BRANCH="${{ inputs.ref_name }}"
+          elif [[ "${{ inputs.event_name }}" == "delete" ]]; then
+            BRANCH="${{ inputs.event_ref }}"
+          elif [[ "${{ inputs.event_name }}" == "pull_request" ]]; then
+            BRANCH="${{ inputs.pr_head_ref }}"
+          fi
+
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "Branch: ${BRANCH}"
+
+      - name: Sanitize branch name to environment name
+        id: sanitize
+        run: |
+          set -euo pipefail
+
+          BRANCH="${{ steps.branch.outputs.branch }}"
+
+          # Remove common prefixes
+          CLEAN=$(echo "$BRANCH" | sed -E 's#^(feature|bugfix|hotfix|fix|chore|release)/##')
+
+          # Lowercase
+          CLEAN=$(echo "$CLEAN" | tr '[:upper:]' '[:lower:]')
+
+          # Replace non-alphanumeric (except hyphens) with hyphens
+          CLEAN=$(echo "$CLEAN" | sed 's/[^a-z0-9-]/-/g')
+
+          # Collapse multiple consecutive hyphens
+          CLEAN=$(echo "$CLEAN" | sed 's/-\{2,\}/-/g')
+
+          # Trim leading/trailing hyphens
+          CLEAN=$(echo "$CLEAN" | sed 's/^-//; s/-$//')
+
+          # Truncate to 24 chars (32 - len("preview-"))
+          CLEAN=$(echo "$CLEAN" | cut -c1-24)
+
+          # Trim trailing hyphen after truncation
+          CLEAN=$(echo "$CLEAN" | sed 's/-$//')
+
+          ENV_NAME="preview-${CLEAN}"
+
+          echo "environment_name=${ENV_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Environment name: ${ENV_NAME}"
+
+      - name: Read .idp/config.yml or use defaults
+        id: config
+        run: |
+          set -euo pipefail
+
+          CONFIG_FILE=".idp/config.yml"
+
+          if [[ "${{ inputs.event_name }}" == "push" && -f "$CONFIG_FILE" ]]; then
+            echo "Found $CONFIG_FILE, reading configuration..."
+
+            # Install yq for YAML parsing
+            if ! command -v yq &> /dev/null; then
+              wget -qO /usr/local/bin/yq \
+                https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+              chmod +x /usr/local/bin/yq
+            fi
+
+            TEMPLATE=$(yq eval '.template // "api-service"' "$CONFIG_FILE")
+            TTL=$(yq eval '.ttl // "7d"' "$CONFIG_FILE")
+            CONTAINER_IMAGE=$(yq eval '.container_image // "nginx:alpine"' "$CONFIG_FILE")
+            CONTAINER_PORT=$(yq eval '.container_port // 80' "$CONFIG_FILE")
+            DOCKERFILE=$(yq eval '.dockerfile // ""' "$CONFIG_FILE")
+            BUILD_CONTEXT=$(yq eval '.build_context // "."' "$CONFIG_FILE")
+            ENV_VARS=$(yq eval -o=json -I0 '.environment // {}' "$CONFIG_FILE")
+            SECRET_VARS=$(yq eval -o=json -I0 '.secrets // {}' "$CONFIG_FILE")
+            SCHEDULE_EXPR=$(yq eval '.schedule_expression // ""' "$CONFIG_FILE")
+            S3_BUCKET=$(yq eval '.s3_bucket_arn // ""' "$CONFIG_FILE")
+            CPU=$(yq eval '.cpu // "256"' "$CONFIG_FILE")
+            MEMORY=$(yq eval '.memory // "512"' "$CONFIG_FILE")
+            LOG_RETENTION=$(yq eval '.log_retention_days // "3"' "$CONFIG_FILE")
+            USE_SHARED=$(yq eval '.use_shared_networking // ""' "$CONFIG_FILE")
+          else
+            echo "Using defaults (no config file or non-push event)..."
+            TEMPLATE="api-service"
+            TTL="7d"
+            CONTAINER_IMAGE="nginx:alpine"
+            CONTAINER_PORT="80"
+            DOCKERFILE=""
+            BUILD_CONTEXT="."
+            ENV_VARS="{}"
+            SECRET_VARS="{}"
+            SCHEDULE_EXPR=""
+            S3_BUCKET=""
+            CPU="256"
+            MEMORY="512"
+            LOG_RETENTION="3"
+            USE_SHARED=""
+          fi
+
+          # Shared networking: config.yml > repo variable > default false
+          if [[ -z "$USE_SHARED" ]]; then
+            USE_SHARED="${{ inputs.use_shared_networking_default }}"
+          fi
+          USE_SHARED="${USE_SHARED:-false}"
+
+          echo "template=${TEMPLATE}" >> "$GITHUB_OUTPUT"
+          echo "ttl=${TTL}" >> "$GITHUB_OUTPUT"
+          echo "container_image=${CONTAINER_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "container_port=${CONTAINER_PORT}" >> "$GITHUB_OUTPUT"
+          echo "dockerfile=${DOCKERFILE}" >> "$GITHUB_OUTPUT"
+          echo "build_context=${BUILD_CONTEXT}" >> "$GITHUB_OUTPUT"
+          echo "environment_variables=${ENV_VARS}" >> "$GITHUB_OUTPUT"
+          echo "secret_variables=${SECRET_VARS}" >> "$GITHUB_OUTPUT"
+          echo "schedule_expression=${SCHEDULE_EXPR}" >> "$GITHUB_OUTPUT"
+          echo "s3_bucket_arn=${S3_BUCKET}" >> "$GITHUB_OUTPUT"
+          echo "cpu=${CPU}" >> "$GITHUB_OUTPUT"
+          echo "memory=${MEMORY}" >> "$GITHUB_OUTPUT"
+          echo "log_retention_days=${LOG_RETENTION}" >> "$GITHUB_OUTPUT"
+          echo "use_shared_networking=${USE_SHARED}" >> "$GITHUB_OUTPUT"
+          echo "owner=${{ inputs.actor }}@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+          echo "Configuration:"
+          echo "  Template: ${TEMPLATE}"
+          echo "  TTL: ${TTL}"
+          echo "  Image: ${CONTAINER_IMAGE}"
+          echo "  Port: ${CONTAINER_PORT}"
+          echo "  CPU: ${CPU}"
+          echo "  Memory: ${MEMORY}"
+          echo "  Log retention: ${LOG_RETENTION} days"
+          echo "  Dockerfile: ${DOCKERFILE:-auto-detect}"
+          echo "  Build context: ${BUILD_CONTEXT}"
+
+      - name: Validate configuration
+        if: inputs.event_name == 'push'
+        run: |
+          set -euo pipefail
+          ERRORS=()
+
+          # Template
+          TEMPLATE="${{ steps.config.outputs.template }}"
+          if [[ "$TEMPLATE" != "api-service" && "$TEMPLATE" != "api-database" && "$TEMPLATE" != "scheduled-worker" ]]; then
+            ERRORS+=("Invalid template '${TEMPLATE}' in .idp/config.yml. Must be one of: api-service, api-database, scheduled-worker.")
+          fi
+
+          # TTL
+          TTL="${{ steps.config.outputs.ttl }}"
+          if [[ ! "$TTL" =~ ^[0-9]+[dh]$ ]]; then
+            ERRORS+=("Invalid ttl '${TTL}' in .idp/config.yml. Must be a number followed by d or h (e.g. 7d, 24h).")
+          fi
+
+          # Port
+          PORT="${{ steps.config.outputs.container_port }}"
+          if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
+            ERRORS+=("Invalid container_port '${PORT}' in .idp/config.yml. Must be 1-65535.")
+          fi
+
+          # Schedule expression required for scheduled-worker
+          SCHEDULE="${{ steps.config.outputs.schedule_expression }}"
+          if [[ "$TEMPLATE" == "scheduled-worker" && -z "$SCHEDULE" ]]; then
+            ERRORS+=("schedule_expression is required in .idp/config.yml when template is scheduled-worker.")
+          fi
+
+          # Environment name (already sanitized, but sanity check)
+          ENV_NAME="${{ steps.sanitize.outputs.environment_name }}"
+          if [[ ${#ENV_NAME} -lt 2 || ${#ENV_NAME} -gt 32 ]]; then
+            ERRORS+=("Sanitized environment name '${ENV_NAME}' is outside the 2-32 char range. Consider a shorter branch name.")
+          fi
+
+          # Report all errors at once
+          if [[ ${#ERRORS[@]} -gt 0 ]]; then
+            for err in "${ERRORS[@]}"; do
+              echo "::error::${err}"
+            done
+            exit 1
+          fi
+
+          echo "All configuration validated successfully."
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        if: inputs.event_name == 'push'
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Decide action (provision / extend / destroy)
+        id: decide
+        run: |
+          set -euo pipefail
+
+          EVENT="${{ inputs.event_name }}"
+          ENV_NAME="${{ steps.sanitize.outputs.environment_name }}"
+
+          # Destroy on branch delete or PR close
+          if [[ "$EVENT" == "delete" ]]; then
+            echo "action=destroy" >> "$GITHUB_OUTPUT"
+            echo "Action: destroy (branch deleted)"
+            exit 0
+          fi
+
+          if [[ "$EVENT" == "pull_request" ]]; then
+            echo "action=destroy" >> "$GITHUB_OUTPUT"
+            echo "Action: destroy (PR closed)"
+            exit 0
+          fi
+
+          # Push event — check if environment already exists
+          METADATA_KEY="environments/${ENV_NAME}/metadata.json"
+          if aws s3 cp "s3://${STATE_BUCKET}/${METADATA_KEY}" /tmp/existing-metadata.json 2>/dev/null; then
+            STATUS=$(jq -r '.status // "unknown"' /tmp/existing-metadata.json)
+            if [[ "$STATUS" == "active" ]]; then
+              echo "action=extend" >> "$GITHUB_OUTPUT"
+              echo "Action: extend (active environment found)"
+              exit 0
+            fi
+          fi
+
+          echo "action=provision" >> "$GITHUB_OUTPUT"
+          echo "Action: provision (new environment)"

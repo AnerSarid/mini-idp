@@ -78,66 +78,41 @@ jobs:
 
           echo "template=${TEMPLATE}" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare tfvars for destroy
+      - name: Download tfvars from S3
         id: tfvars
         run: |
           set -euo pipefail
-          TEMPLATE="${{ steps.metadata.outputs.template }}"
-          TFVARS_FILE="infrastructure/environments/${{ inputs.environment_name }}.tfvars"
+          TFVARS_FILE="infrastructure/environments/${{ inputs.environment_name }}.tfvars.json"
+          mkdir -p "$(dirname "$TFVARS_FILE")"
 
-          # If the tfvars doesn't exist in the repo, generate one from metadata
-          if [[ ! -f "$TFVARS_FILE" ]]; then
-            echo "Generating fallback tfvars from metadata..."
-            mkdir -p "$(dirname "$TFVARS_FILE")"
-            OWNER=$(jq -r '.owner // "unknown"' metadata.json)
-            TTL=$(jq -r '.ttl // "7d"' metadata.json)
-            CREATED_AT=$(jq -r '.created_at // "2000-01-01T00:00:00Z"' metadata.json)
-            EXPIRES_AT=$(jq -r '.expires_at // "2000-01-01T00:00:00Z"' metadata.json)
+          # The provision workflow uploads the exact tfvars used to create the
+          # environment. Download them — no reconstruction needed.
+          if aws s3 cp "s3://${STATE_BUCKET}/environments/${{ inputs.environment_name }}/tfvars.json" \
+               "$TFVARS_FILE" 2>/dev/null; then
+            echo "Downloaded tfvars from S3."
+          else
+            # Fallback for environments provisioned before tfvars were stored.
+            echo "::warning::tfvars.json not found in S3. Building minimal tfvars from metadata."
+            TEMPLATE="${{ steps.metadata.outputs.template }}"
 
-            cat > "${TFVARS_FILE}" <<EOF
-          environment_name = "${{ inputs.environment_name }}"
-          owner            = "${OWNER}"
-          ttl              = "${TTL}"
-          created_at       = "${CREATED_AT}"
-          expires_at       = "${EXPIRES_AT}"
-          EOF
+            jq '{
+              environment_name: .name,
+              owner: (.owner // "unknown"),
+              ttl: (.ttl // "7d"),
+              created_at: (.created_at // "2000-01-01T00:00:00Z"),
+              expires_at: (.expires_at // "2000-01-01T00:00:00Z")
+            }' metadata.json > "$TFVARS_FILE"
 
             if [[ "$TEMPLATE" == "scheduled-worker" ]]; then
-              cat >> "${TFVARS_FILE}" <<EOF
-          schedule_expression = "rate(1 hour)"
-          s3_bucket_arn       = ""
-          EOF
+              jq '. + {schedule_expression: "rate(1 hour)", s3_bucket_arn: ""}' \
+                "$TFVARS_FILE" > "$TFVARS_FILE.tmp" && mv "$TFVARS_FILE.tmp" "$TFVARS_FILE"
             fi
-
-            # DNS variables for ALB-based templates
-            if [[ "$TEMPLATE" == "api-service" || "$TEMPLATE" == "api-database" ]]; then
-              ACM_ARN=$(jq -r '.acm_certificate_arn // ""' metadata.json)
-              ZONE_ID=$(jq -r '.route53_zone_id // ""' metadata.json)
-              PREVIEW_DOMAIN=$(jq -r '.preview_domain // ""' metadata.json)
-              cat >> "${TFVARS_FILE}" <<EOF
-          acm_certificate_arn = "${ACM_ARN}"
-          route53_zone_id     = "${ZONE_ID}"
-          preview_domain      = "${PREVIEW_DOMAIN}"
-          EOF
-            fi
-
-            # Container image (if a custom image was deployed)
-            CONTAINER_IMAGE=$(jq -r '.container_image // ""' metadata.json)
-            if [[ -n "$CONTAINER_IMAGE" && "$CONTAINER_IMAGE" != "nginx:alpine" ]]; then
-              echo "container_image = \"${CONTAINER_IMAGE}\"" >> "${TFVARS_FILE}"
-            fi
-
-            # Shared networking (if used during provisioning)
-            USE_SHARED=$(jq -r '.use_shared_networking // "false"' metadata.json)
-            if [[ "$USE_SHARED" == "true" ]]; then
-              echo 'use_shared_networking = true' >> "${TFVARS_FILE}"
-              echo "state_bucket          = \"${STATE_BUCKET}\"" >> "${TFVARS_FILE}"
-            fi
-
-            sed -i 's/^          //' "${TFVARS_FILE}"
           fi
 
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Copy shared base files into template
+        run: cp infrastructure/templates/_base/*.tf "infrastructure/templates/${{ steps.metadata.outputs.template }}/"
 
       - name: Tofu init
         working-directory: infrastructure/templates/${{ steps.metadata.outputs.template }}

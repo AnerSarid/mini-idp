@@ -12,7 +12,8 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  azs = slice(data.aws_availability_zones.available.names, 0, 2)
+  prefix = "idp-${var.environment_name}"
+  azs    = slice(data.aws_availability_zones.available.names, 0, 2)
 
   common_tags = merge(var.tags, {
     "idp:environment" = var.environment_name
@@ -30,7 +31,7 @@ resource "aws_vpc" "this" {
   enable_dns_hostnames = true
 
   tags = merge(local.common_tags, {
-    Name = "${var.environment_name}-vpc"
+    Name = "${local.prefix}-vpc"
   })
 }
 
@@ -47,7 +48,7 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name = "${var.environment_name}-public-${local.azs[count.index]}"
+    Name = "${local.prefix}-public-${local.azs[count.index]}"
     Tier = "public"
   })
 }
@@ -64,7 +65,7 @@ resource "aws_subnet" "private" {
   availability_zone = local.azs[count.index]
 
   tags = merge(local.common_tags, {
-    Name = "${var.environment_name}-private-${local.azs[count.index]}"
+    Name = "${local.prefix}-private-${local.azs[count.index]}"
     Tier = "private"
   })
 }
@@ -77,7 +78,7 @@ resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
 
   tags = merge(local.common_tags, {
-    Name = "${var.environment_name}-igw"
+    Name = "${local.prefix}-igw"
   })
 }
 
@@ -89,7 +90,7 @@ resource "aws_eip" "nat" {
   domain = "vpc"
 
   tags = merge(local.common_tags, {
-    Name = "${var.environment_name}-nat-eip"
+    Name = "${local.prefix}-nat-eip"
   })
 
   depends_on = [aws_internet_gateway.this]
@@ -100,7 +101,7 @@ resource "aws_nat_gateway" "this" {
   subnet_id     = aws_subnet.public[0].id
 
   tags = merge(local.common_tags, {
-    Name = "${var.environment_name}-nat"
+    Name = "${local.prefix}-nat"
   })
 
   depends_on = [aws_internet_gateway.this]
@@ -114,7 +115,7 @@ resource "aws_route_table" "public" {
   vpc_id = aws_vpc.this.id
 
   tags = merge(local.common_tags, {
-    Name = "${var.environment_name}-public-rt"
+    Name = "${local.prefix}-public-rt"
   })
 }
 
@@ -139,7 +140,7 @@ resource "aws_route_table" "private" {
   vpc_id = aws_vpc.this.id
 
   tags = merge(local.common_tags, {
-    Name = "${var.environment_name}-private-rt"
+    Name = "${local.prefix}-private-rt"
   })
 }
 

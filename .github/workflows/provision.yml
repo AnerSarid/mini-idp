@@ -286,97 +286,87 @@ jobs:
           EXPIRES_AT=$(date -u -d "${CREATED_AT} + ${TTL_SECONDS} seconds" +"%Y-%m-%dT%H:%M:%SZ")
 
           mkdir -p infrastructure/environments
-          TFVARS_FILE="infrastructure/environments/${{ inputs.environment_name }}.tfvars"
+          TFVARS_FILE="infrastructure/environments/${{ inputs.environment_name }}.tfvars.json"
 
-          # Base variables (all templates)
-          cat > "${TFVARS_FILE}" <<TFEOF
-          environment_name = "${{ inputs.environment_name }}"
-          owner            = "${{ inputs.owner }}"
-          ttl              = "${{ inputs.ttl }}"
-          created_at       = "${CREATED_AT}"
-          expires_at       = "${EXPIRES_AT}"
-          TFEOF
+          # Build the tfvars JSON using jq — no heredocs, no sed, no indentation bugs.
+          # Start with base variables common to all templates.
+          jq -n \
+            --arg env_name "${{ inputs.environment_name }}" \
+            --arg owner "${{ inputs.owner }}" \
+            --arg ttl "${{ inputs.ttl }}" \
+            --arg created_at "$CREATED_AT" \
+            --arg expires_at "$EXPIRES_AT" \
+            '{
+              environment_name: $env_name,
+              owner: $owner,
+              ttl: $ttl,
+              created_at: $created_at,
+              expires_at: $expires_at
+            }' > "$TFVARS_FILE"
 
-          # Template-specific variables
+          # Template-specific: scheduled-worker
           if [[ "${{ inputs.template }}" == "scheduled-worker" ]]; then
-            cat >> "${TFVARS_FILE}" <<TFEOF
-          schedule_expression = "${{ inputs.schedule_expression }}"
-          s3_bucket_arn       = "${{ inputs.s3_bucket_arn }}"
-          TFEOF
+            jq \
+              --arg schedule "${{ inputs.schedule_expression }}" \
+              --arg s3_arn "${{ inputs.s3_bucket_arn }}" \
+              '. + {schedule_expression: $schedule, s3_bucket_arn: $s3_arn}' \
+              "$TFVARS_FILE" > "$TFVARS_FILE.tmp" && mv "$TFVARS_FILE.tmp" "$TFVARS_FILE"
           fi
 
-          # DNS and HTTPS variables (api-service and api-database templates)
+          # DNS and HTTPS (api-service, api-database)
           if [[ "${{ inputs.template }}" == "api-service" || "${{ inputs.template }}" == "api-database" ]]; then
-            ACM_ARN="${{ inputs.acm_certificate_arn }}"
-            ZONE_ID="${{ inputs.route53_zone_id }}"
-            PREVIEW_DOMAIN="${{ inputs.preview_domain }}"
-            if [[ -n "$ACM_ARN" ]]; then
-              echo "acm_certificate_arn = \"${ACM_ARN}\"" >> "${TFVARS_FILE}"
-            fi
-            if [[ -n "$ZONE_ID" ]]; then
-              echo "route53_zone_id = \"${ZONE_ID}\"" >> "${TFVARS_FILE}"
-            fi
-            if [[ -n "$PREVIEW_DOMAIN" ]]; then
-              echo "preview_domain = \"${PREVIEW_DOMAIN}\"" >> "${TFVARS_FILE}"
-            fi
+            jq \
+              --arg acm "${{ inputs.acm_certificate_arn }}" \
+              --arg zone "${{ inputs.route53_zone_id }}" \
+              --arg domain "${{ inputs.preview_domain }}" \
+              '. + (if $acm != "" then {acm_certificate_arn: $acm} else {} end)
+                 + (if $zone != "" then {route53_zone_id: $zone} else {} end)
+                 + (if $domain != "" then {preview_domain: $domain} else {} end)' \
+              "$TFVARS_FILE" > "$TFVARS_FILE.tmp" && mv "$TFVARS_FILE.tmp" "$TFVARS_FILE"
           fi
 
-          # Container configuration (all templates)
-          CONTAINER_IMAGE="${{ inputs.container_image }}"
-          CONTAINER_PORT="${{ inputs.container_port }}"
-          if [[ -n "$CONTAINER_IMAGE" && "$CONTAINER_IMAGE" != "nginx:alpine" ]]; then
-            echo "container_image = \"${CONTAINER_IMAGE}\"" >> "${TFVARS_FILE}"
-          fi
-          if [[ -n "$CONTAINER_PORT" && "$CONTAINER_PORT" != "80" ]]; then
-            echo "container_port = ${CONTAINER_PORT}" >> "${TFVARS_FILE}"
-          fi
+          # Container configuration — only include non-default values.
+          # Terraform variable defaults handle the rest.
+          jq \
+            --arg image "${{ inputs.container_image }}" \
+            --arg port "${{ inputs.container_port }}" \
+            --arg cpu "${{ inputs.cpu }}" \
+            --arg memory "${{ inputs.memory }}" \
+            --arg log_ret "${{ inputs.log_retention_days }}" \
+            '. + (if $image != "" and $image != "nginx:alpine" then {container_image: $image} else {} end)
+               + (if $port != "" and $port != "80" then {container_port: ($port | tonumber)} else {} end)
+               + (if $cpu != "" and $cpu != "256" then {cpu: ($cpu | tonumber)} else {} end)
+               + (if $memory != "" and $memory != "512" then {memory: ($memory | tonumber)} else {} end)
+               + (if $log_ret != "" and $log_ret != "3" then {log_retention_days: ($log_ret | tonumber)} else {} end)' \
+            "$TFVARS_FILE" > "$TFVARS_FILE.tmp" && mv "$TFVARS_FILE.tmp" "$TFVARS_FILE"
 
-          # Resource sizing
-          CPU="${{ inputs.cpu }}"
-          MEMORY="${{ inputs.memory }}"
-          if [[ -n "$CPU" && "$CPU" != "256" ]]; then
-            echo "cpu = ${CPU}" >> "${TFVARS_FILE}"
-          fi
-          if [[ -n "$MEMORY" && "$MEMORY" != "512" ]]; then
-            echo "memory = ${MEMORY}" >> "${TFVARS_FILE}"
-          fi
-
-          # Log retention
-          LOG_RETENTION="${{ inputs.log_retention_days }}"
-          if [[ -n "$LOG_RETENTION" && "$LOG_RETENTION" != "3" ]]; then
-            echo "log_retention_days = ${LOG_RETENTION}" >> "${TFVARS_FILE}"
-          fi
-
-          # Environment variables (JSON map → HCL map)
+          # Environment variables (already JSON — merge directly)
           ENV_VARS='${{ inputs.environment_variables }}'
           if [[ -n "$ENV_VARS" && "$ENV_VARS" != "{}" ]]; then
-            echo "" >> "${TFVARS_FILE}"
-            echo "environment_variables = {" >> "${TFVARS_FILE}"
-            echo "$ENV_VARS" | jq -r 'to_entries[] | "  \(.key) = \"\(.value)\""' >> "${TFVARS_FILE}"
-            echo "}" >> "${TFVARS_FILE}"
+            jq --argjson env_vars "$ENV_VARS" '. + {environment_variables: $env_vars}' \
+              "$TFVARS_FILE" > "$TFVARS_FILE.tmp" && mv "$TFVARS_FILE.tmp" "$TFVARS_FILE"
           fi
 
-          # Secret variables (JSON map → HCL map)
+          # Secret variables (already JSON — merge directly)
           SECRET_VARS='${{ inputs.secret_variables }}'
           if [[ -n "$SECRET_VARS" && "$SECRET_VARS" != "{}" ]]; then
-            echo "" >> "${TFVARS_FILE}"
-            echo "secret_variables = {" >> "${TFVARS_FILE}"
-            echo "$SECRET_VARS" | jq -r 'to_entries[] | "  \(.key) = \"\(.value)\""' >> "${TFVARS_FILE}"
-            echo "}" >> "${TFVARS_FILE}"
+            jq --argjson secret_vars "$SECRET_VARS" '. + {secret_variables: $secret_vars}' \
+              "$TFVARS_FILE" > "$TFVARS_FILE.tmp" && mv "$TFVARS_FILE.tmp" "$TFVARS_FILE"
           fi
 
           # Shared networking
           if [[ "${{ inputs.use_shared_networking }}" == "true" ]]; then
-            echo 'use_shared_networking = true' >> "${TFVARS_FILE}"
-            echo "state_bucket          = \"${STATE_BUCKET}\"" >> "${TFVARS_FILE}"
+            jq --arg bucket "$STATE_BUCKET" \
+              '. + {use_shared_networking: true, state_bucket: $bucket}' \
+              "$TFVARS_FILE" > "$TFVARS_FILE.tmp" && mv "$TFVARS_FILE.tmp" "$TFVARS_FILE"
           fi
-
-          # Remove leading whitespace from heredoc indentation
-          sed -i 's/^          //' "${TFVARS_FILE}"
 
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
           echo "created_at=${CREATED_AT}" >> "$GITHUB_OUTPUT"
           echo "expires_at=${EXPIRES_AT}" >> "$GITHUB_OUTPUT"
+
+      - name: Copy shared base files into template
+        run: cp infrastructure/templates/_base/*.tf "infrastructure/templates/${{ inputs.template }}/"
 
       - name: Tofu init
         working-directory: infrastructure/templates/${{ inputs.template }}
@@ -409,26 +399,42 @@ jobs:
             "s3://${STATE_BUCKET}/environments/${{ inputs.environment_name }}/outputs.json" \
             --content-type "application/json"
 
+      - name: Upload tfvars to S3
+        run: |
+          set -euo pipefail
+          aws s3 cp "${{ steps.tfvars.outputs.tfvars_file }}" \
+            "s3://${STATE_BUCKET}/environments/${{ inputs.environment_name }}/tfvars.json" \
+            --content-type "application/json"
+
       - name: Upload metadata to S3
         run: |
           set -euo pipefail
-          cat > metadata.json <<EOF
-          {
-            "name": "${{ inputs.environment_name }}",
-            "template": "${{ inputs.template }}",
-            "owner": "${{ inputs.owner }}",
-            "ttl": "${{ inputs.ttl }}",
-            "created_at": "${{ steps.tfvars.outputs.created_at }}",
-            "expires_at": "${{ steps.tfvars.outputs.expires_at }}",
-            "status": "active",
-            "container_image": "${{ inputs.container_image }}",
-            "acm_certificate_arn": "${{ inputs.acm_certificate_arn }}",
-            "route53_zone_id": "${{ inputs.route53_zone_id }}",
-            "preview_domain": "${{ inputs.preview_domain }}",
-            "use_shared_networking": "${{ inputs.use_shared_networking }}"
-          }
-          EOF
-          sed -i 's/^          //' metadata.json
+          jq -n \
+            --arg name "${{ inputs.environment_name }}" \
+            --arg template "${{ inputs.template }}" \
+            --arg owner "${{ inputs.owner }}" \
+            --arg ttl "${{ inputs.ttl }}" \
+            --arg created_at "${{ steps.tfvars.outputs.created_at }}" \
+            --arg expires_at "${{ steps.tfvars.outputs.expires_at }}" \
+            --arg container_image "${{ inputs.container_image }}" \
+            --arg acm_arn "${{ inputs.acm_certificate_arn }}" \
+            --arg zone_id "${{ inputs.route53_zone_id }}" \
+            --arg domain "${{ inputs.preview_domain }}" \
+            --arg shared "${{ inputs.use_shared_networking }}" \
+            '{
+              name: $name,
+              template: $template,
+              owner: $owner,
+              ttl: $ttl,
+              created_at: $created_at,
+              expires_at: $expires_at,
+              status: "active",
+              container_image: $container_image,
+              acm_certificate_arn: $acm_arn,
+              route53_zone_id: $zone_id,
+              preview_domain: $domain,
+              use_shared_networking: $shared
+            }' > metadata.json
           aws s3 cp metadata.json \
             "s3://${STATE_BUCKET}/environments/${{ inputs.environment_name }}/metadata.json" \
             --content-type "application/json"

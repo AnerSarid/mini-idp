@@ -3,7 +3,7 @@
 ################################################################################
 
 locals {
-  prefix = var.environment_name
+  prefix = "idp-${var.environment_name}"
 
   common_tags = merge(var.tags, {
     "idp:module" = "rds-postgres"

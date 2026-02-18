@@ -2,19 +2,16 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import dayjs from 'dayjs';
-import { requireAuth } from '../lib/config.js';
 import { getEnvironment, updateEnvironmentMetadata } from '../lib/environments.js';
 import { parseTtl, validateTtl } from '../lib/ttl.js';
+import { withAuth } from '../lib/command.js';
 
 export function registerExtendCommand(program: Command): void {
   program
     .command('extend <name>')
     .description('Extend the TTL of an environment')
     .requiredOption('--ttl <ttl>', 'Additional time to live (e.g. 7d, 24h)')
-    .action(async (name: string, opts) => {
-      try {
-        requireAuth();
-
+    .action(withAuth(async (name: string, opts) => {
         validateTtl(opts.ttl);
 
         const spinner = ora('Fetching environment...').start();
@@ -55,10 +52,5 @@ export function registerExtendCommand(program: Command): void {
         process.stdout.write(
           chalk.green(`\nEnvironment "${name}" extended to ${newExpiry.format('YYYY-MM-DD HH:mm')}.\n`)
         );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Error: ${message}\n`));
-        process.exit(1);
-      }
-    });
+    }));
 }

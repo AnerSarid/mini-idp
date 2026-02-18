@@ -2,20 +2,16 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import dayjs from 'dayjs';
-import { requireAuth } from '../lib/config.js';
 import { triggerWorkflow, waitForWorkflowCompletion } from '../lib/github.js';
 import { environmentExists, getEnvironment } from '../lib/environments.js';
 import { parseTtl, validateTtl } from '../lib/ttl.js';
-import * as readline from 'readline';
+import { prompt } from '../lib/prompt.js';
+import { withAuth } from '../lib/command.js';
+import { TEMPLATES, TEMPLATE_NAMES, type TemplateName } from '../lib/templates.js';
 
-const TEMPLATES = ['api-service', 'api-database', 'scheduled-worker'] as const;
-type Template = (typeof TEMPLATES)[number];
-
-const COST_ESTIMATES: Record<Template, string> = {
-  'api-service': '~$63/mo',
-  'api-database': '~$76/mo',
-  'scheduled-worker': '~$35/mo',
-};
+const COST_MAP = Object.fromEntries(
+  TEMPLATES.map((t) => [t.name, t.estimatedCost])
+) as Record<TemplateName, string>;
 
 const NAME_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -47,40 +43,24 @@ function computeExpiry(ttl: string): string {
   return dayjs().add(value, unit).toISOString();
 }
 
-function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
-
 export function registerCreateCommand(program: Command): void {
   program
     .command('create')
     .description('Create a new environment')
     .requiredOption(
       '--template <template>',
-      `Template to use (${TEMPLATES.join(', ')})`
+      `Template to use (${TEMPLATE_NAMES.join(', ')})`
     )
     .requiredOption('--name <name>', 'Environment name')
     .requiredOption('--owner <owner>', 'Owner email address')
     .option('--ttl <ttl>', 'Time to live (e.g. 7d, 24h)', '7d')
     .option('--schedule <expression>', 'Cron schedule (for scheduled-worker)')
     .option('--s3-bucket <arn>', 'S3 bucket ARN (for scheduled-worker)')
-    .action(async (opts) => {
-      try {
-        requireAuth();
-
-        const template = opts.template as Template;
-        if (!TEMPLATES.includes(template)) {
+    .action(withAuth(async (opts) => {
+        const template = opts.template as TemplateName;
+        if (!TEMPLATE_NAMES.includes(template)) {
           process.stderr.write(
-            chalk.red(`Invalid template. Choose from: ${TEMPLATES.join(', ')}\n`)
+            chalk.red(`Invalid template. Choose from: ${TEMPLATE_NAMES.join(', ')}\n`)
           );
           process.exit(1);
         }
@@ -117,7 +97,7 @@ export function registerCreateCommand(program: Command): void {
         process.stdout.write(`  TTL:      ${ttl}\n`);
         process.stdout.write(`  Expires:  ${dayjs(expiresAt).format('YYYY-MM-DD HH:mm')}\n`);
         process.stdout.write(
-          `  Est Cost: ${chalk.yellow(COST_ESTIMATES[template])}\n`
+          `  Est Cost: ${chalk.yellow(COST_MAP[template])}\n`
         );
         if (opts.schedule) {
           process.stdout.write(`  Schedule: ${opts.schedule}\n`);
@@ -186,10 +166,5 @@ export function registerCreateCommand(program: Command): void {
           process.stderr.write(`Workflow: ${result.html_url}\n`);
           process.exit(1);
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Error: ${message}\n`));
-        process.exit(1);
-      }
-    });
+    }));
 }

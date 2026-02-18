@@ -2,20 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { setConfig, getConfig } from '../lib/config.js';
 import { validateToken } from '../lib/github.js';
-import * as readline from 'readline';
-
-function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
+import { prompt } from '../lib/prompt.js';
 
 export function registerAuthCommand(program: Command): void {
   const auth = program.command('auth').description('Authentication management');

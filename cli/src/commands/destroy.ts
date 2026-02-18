@@ -1,32 +1,16 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { requireAuth } from '../lib/config.js';
 import { triggerWorkflow, waitForWorkflowCompletion } from '../lib/github.js';
 import { getEnvironment } from '../lib/environments.js';
-import * as readline from 'readline';
-
-function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
+import { prompt } from '../lib/prompt.js';
+import { withAuth } from '../lib/command.js';
 
 export function registerDestroyCommand(program: Command): void {
   program
     .command('destroy <name>')
     .description('Destroy an environment')
-    .action(async (name: string) => {
-      try {
-        requireAuth();
-
+    .action(withAuth(async (name: string) => {
         const spinner = ora('Fetching environment details...').start();
         let env;
         try {
@@ -82,10 +66,5 @@ export function registerDestroyCommand(program: Command): void {
           process.stderr.write(`Workflow: ${result.html_url}\n`);
           process.exit(1);
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Error: ${message}\n`));
-        process.exit(1);
-      }
-    });
+    }));
 }

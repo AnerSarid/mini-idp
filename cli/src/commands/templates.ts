@@ -1,54 +1,6 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-
-interface TemplateInfo {
-  name: string;
-  description: string;
-  resources: string[];
-  estimatedCost: string;
-}
-
-const TEMPLATES: TemplateInfo[] = [
-  {
-    name: 'api-service',
-    description: 'ECS Fargate service with ALB, auto-scaling, and CloudWatch monitoring',
-    resources: [
-      'ECS Fargate Service',
-      'Application Load Balancer',
-      'CloudWatch Log Group & Alarms',
-      'IAM Roles & Policies',
-      'Security Groups',
-    ],
-    estimatedCost: '~$63/mo',
-  },
-  {
-    name: 'api-database',
-    description: 'ECS Fargate service with ALB and RDS PostgreSQL database',
-    resources: [
-      'ECS Fargate Service',
-      'Application Load Balancer',
-      'RDS PostgreSQL (db.t3.micro)',
-      'CloudWatch Log Group & Alarms',
-      'IAM Roles & Policies',
-      'Security Groups',
-      'DB Subnet Group',
-    ],
-    estimatedCost: '~$76/mo',
-  },
-  {
-    name: 'scheduled-worker',
-    description: 'EventBridge scheduled task running on ECS Fargate with optional S3 access',
-    resources: [
-      'ECS Fargate Task Definition',
-      'EventBridge Scheduler Rule',
-      'CloudWatch Log Group',
-      'IAM Roles & Policies',
-      'Security Groups',
-      'S3 Access Policy (optional)',
-    ],
-    estimatedCost: '~$35/mo',
-  },
-];
+import { TEMPLATES } from '../lib/templates.js';
 
 export function registerTemplatesCommand(program: Command): void {
   program

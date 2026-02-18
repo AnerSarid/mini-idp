@@ -1,75 +1,13 @@
 ####################################################################
-# Template 3: Scheduled Worker
-# Provisions: VPC, ECS Scheduled Task, CloudWatch, optional S3 access
+# Template: Scheduled Worker
+# Provisions: ECS Scheduled Task, CloudWatch, optional S3 access
+#
+# Shared infrastructure (backend, provider, tags, networking, common)
+# is provided by _base/*.tf — copied in at CI time.
 ####################################################################
 
-terraform {
-  required_version = ">= 1.6.0"
-
-  # All backend values are provided via -backend-config flags from CI.
-  # For local use: tofu init -backend-config=../../backend.conf -backend-config="key=environments/<name>/terraform.tfstate"
-  backend "s3" {
-  }
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.aws_region
-
-  default_tags {
-    tags = local.tags
-  }
-}
-
 locals {
-  tags = {
-    "idp:managed"     = "true"
-    "idp:environment"  = var.environment_name
-    "idp:template"     = "scheduled-worker"
-    "idp:owner"        = var.owner
-    "idp:created-at"   = var.created_at
-    "idp:ttl"          = var.ttl
-    "idp:expires-at"   = var.expires_at
-    "cost-center"      = "engineering"
-  }
-}
-
-# --- Networking (per-env or shared) ---
-module "networking" {
-  count            = var.use_shared_networking ? 0 : 1
-  source           = "../../modules/networking"
-  environment_name = var.environment_name
-  tags             = local.tags
-}
-
-data "terraform_remote_state" "shared_networking" {
-  count   = var.use_shared_networking ? 1 : 0
-  backend = "s3"
-
-  config = {
-    bucket = var.state_bucket
-    key    = "shared/preview-networking/terraform.tfstate"
-    region = var.aws_region
-  }
-}
-
-locals {
-  vpc_id             = var.use_shared_networking ? data.terraform_remote_state.shared_networking[0].outputs.vpc_id : module.networking[0].vpc_id
-  private_subnet_ids = var.use_shared_networking ? data.terraform_remote_state.shared_networking[0].outputs.private_subnet_ids : module.networking[0].private_subnet_ids
-}
-
-# --- Common (IAM, Logs, Secrets) ---
-module "common" {
-  source             = "../../modules/common"
-  environment_name   = var.environment_name
-  log_retention_days = var.log_retention_days
-  tags               = local.tags
+  template_name = "scheduled-worker"
 }
 
 # --- Scheduled Task ---

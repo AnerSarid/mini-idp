@@ -3,7 +3,7 @@
 ################################################################################
 
 locals {
-  name_prefix = var.environment_name
+  name_prefix = "idp-${var.environment_name}"
 
   common_tags = merge(var.tags, {
     "idp:environment" = var.environment_name

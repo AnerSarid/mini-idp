@@ -1,11 +1,12 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { requireAuth } from '../lib/config.js';
 import { getEnvironment } from '../lib/environments.js';
-import { DynamoDBClient, GetItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
+import { GetItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
 import { getConfigValue } from '../lib/config.js';
-import * as readline from 'readline';
+import { prompt } from '../lib/prompt.js';
+import { getDynamoClient } from '../lib/clients.js';
+import { withAuth } from '../lib/command.js';
 
 function getLockTable(): string {
   return getConfigValue('aws.lockTable');
@@ -13,23 +14,6 @@ function getLockTable(): string {
 
 function getStateBucket(): string {
   return getConfigValue('aws.stateBucket');
-}
-
-function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
-
-function getDynamoClient(): DynamoDBClient {
-  return new DynamoDBClient({ region: getConfigValue('aws.region') });
 }
 
 /**
@@ -45,10 +29,7 @@ export function registerUnlockCommand(program: Command): void {
     .command('unlock <name>')
     .description('Force-unlock a stuck Terraform state lock for an environment')
     .option('--force', 'Skip confirmation prompt')
-    .action(async (name: string, opts) => {
-      try {
-        requireAuth();
-
+    .action(withAuth(async (name: string, opts) => {
         // Verify the environment exists
         const envSpinner = ora('Checking environment...').start();
         try {
@@ -133,10 +114,5 @@ export function registerUnlockCommand(program: Command): void {
         process.stdout.write(
           chalk.gray('You can now re-run provision or destroy workflows.\n')
         );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Error: ${message}\n`));
-        process.exit(1);
-      }
-    });
+    }));
 }

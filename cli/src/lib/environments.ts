@@ -1,10 +1,10 @@
 import {
-  S3Client,
   ListObjectsV2Command,
   GetObjectCommand,
   PutObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getConfigValue } from './config.js';
+import { getS3Client } from './clients.js';
 
 export interface EnvironmentMetadata {
   name: string;
@@ -37,10 +37,6 @@ function flattenTerraformOutputs(raw: Record<string, unknown>): EnvironmentOutpu
   return flat;
 }
 
-function getS3Client(): S3Client {
-  return new S3Client({ region: getConfigValue('aws.region') });
-}
-
 function getBucket(): string {
   return getConfigValue('aws.stateBucket');
 }
@@ -68,20 +64,18 @@ export async function listEnvironments(): Promise<EnvironmentMetadata[]> {
     .map((obj) => obj.Key!)
     .filter((key) => key.endsWith('/metadata.json'));
 
-  const environments: EnvironmentMetadata[] = [];
-
-  for (const key of metadataKeys) {
-    try {
+  const results = await Promise.allSettled(
+    metadataKeys.map(async (key) => {
       const getCmd = new GetObjectCommand({ Bucket: bucket, Key: key });
       const result = await client.send(getCmd);
       const body = await streamToString(result.Body as NodeJS.ReadableStream);
-      environments.push(JSON.parse(body) as EnvironmentMetadata);
-    } catch {
-      // Skip environments with unreadable metadata
-    }
-  }
+      return JSON.parse(body) as EnvironmentMetadata;
+    })
+  );
 
-  return environments;
+  return results
+    .filter((r): r is PromiseFulfilledResult<EnvironmentMetadata> => r.status === 'fulfilled')
+    .map((r) => r.value);
 }
 
 export async function getEnvironment(

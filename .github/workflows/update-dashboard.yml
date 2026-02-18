@@ -187,13 +187,14 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           # Only commit if meaningful content changed (ignore timestamp-only diffs).
-          # The "Last updated" line changes every run — strip it before comparing.
-          if git diff ENVIRONMENTS.md | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v 'Last updated' | grep -qv '^$'; then
-            echo "ENVIRONMENTS.md has meaningful changes, committing."
-          else
+          # Strip the "Last updated" line from both versions before comparing.
+          sed '/Last updated/d' ENVIRONMENTS.md > /tmp/dashboard-new.md
+          git show HEAD:ENVIRONMENTS.md 2>/dev/null | sed '/Last updated/d' > /tmp/dashboard-old.md || true
+          if diff -q /tmp/dashboard-new.md /tmp/dashboard-old.md > /dev/null 2>&1; then
             echo "Only timestamp changed in ENVIRONMENTS.md, skipping commit."
             exit 0
           fi
+          echo "ENVIRONMENTS.md has meaningful changes, committing."
 
           git add ENVIRONMENTS.md
           git commit -m "docs: update ENVIRONMENTS.md [skip ci]"

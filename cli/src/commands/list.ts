@@ -2,8 +2,8 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import dayjs from 'dayjs';
-import { requireAuth } from '../lib/config.js';
 import { listEnvironments } from '../lib/environments.js';
+import { withAuth } from '../lib/command.js';
 
 function statusColor(status: string): string {
   switch (status) {
@@ -33,10 +33,7 @@ export function registerListCommand(program: Command): void {
     .command('list')
     .description('List all environments')
     .option('--json', 'Output as JSON')
-    .action(async (opts) => {
-      try {
-        requireAuth();
-
+    .action(withAuth(async (opts) => {
         const spinner = ora('Fetching environments...').start();
         const environments = await listEnvironments();
         spinner.stop();
@@ -95,10 +92,5 @@ export function registerListCommand(program: Command): void {
         process.stdout.write(
           chalk.gray(`\n${environments.length} environment(s)\n`)
         );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Error: ${message}\n`));
-        process.exit(1);
-      }
-    });
+    }));
 }

@@ -137,6 +137,17 @@ jobs:
           set -euo pipefail
           aws s3 rm "s3://${STATE_BUCKET}/environments/${{ inputs.environment_name }}/" --recursive
 
+      - name: Clean up DynamoDB state digest
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          STATE_KEY="environments/${{ inputs.environment_name }}/terraform.tfstate"
+          aws dynamodb delete-item \
+            --table-name "${LOCK_TABLE}" \
+            --key "{\"LockID\":{\"S\":\"${STATE_BUCKET}/${STATE_KEY}-md5\"}}" \
+            2>/dev/null || true
+          echo "DynamoDB digest entry cleaned up."
+
       - name: Clean up ECR images
         continue-on-error: true
         run: |

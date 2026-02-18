@@ -2,7 +2,7 @@
 # Template-specific variables for: api-database
 #
 # Shared variables (environment_name, owner, ttl, etc.) are in
-# _base/variables.tf — copied in at CI time.
+# _base/shared-variables.tf — copied in at CI time.
 ####################################################################
 
 variable "container_image" {

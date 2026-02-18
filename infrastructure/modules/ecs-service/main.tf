@@ -5,6 +5,9 @@
 locals {
   name_prefix = "idp-${var.environment_name}"
 
+  # ALB/TG names are limited to 32 chars. Reserve 4 for suffix (-alb, -tg).
+  name_prefix_short = substr(local.name_prefix, 0, min(28, length(local.name_prefix)))
+
   common_tags = merge(var.tags, {
     "idp:environment" = var.environment_name
     "idp:managed"     = "terraform"
@@ -125,7 +128,7 @@ resource "aws_vpc_security_group_egress_rule" "ecs_all_out" {
 ################################################################################
 
 resource "aws_lb" "this" {
-  name               = "${local.name_prefix}-alb"
+  name               = "${local.name_prefix_short}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
@@ -141,7 +144,7 @@ resource "aws_lb" "this" {
 ################################################################################
 
 resource "aws_lb_target_group" "this" {
-  name        = "${local.name_prefix}-tg"
+  name        = "${local.name_prefix_short}-tg"
   port        = var.container_port
   protocol    = "HTTP"
   vpc_id      = var.vpc_id

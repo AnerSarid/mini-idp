@@ -253,6 +253,19 @@ Start with layer 1 (visibility). Don't build layers 3-4 until there's real multi
 - #16 Parameterize hardcoded values ✅
 - #7 Shared networking (optional toggle, `terraform_remote_state` lookup) ✅
 
+**Elegant improvements (all 11 from `docs/elegant-improvements.md`):**
+- E#1 De-duplicate template boilerplate — `_base/` shared files copied at CI time ✅
+- E#2 Extract shared `prompt()` utility — `cli/src/lib/prompt.ts` ✅
+- E#3 Command error-handling wrapper — `withAuth()` in `cli/src/lib/command.ts` ✅
+- E#4 Singleton S3/DynamoDB clients — lazy singletons in environments.ts + unlock.ts ✅
+- E#5 Parallel S3 fetches — `Promise.allSettled()` in `listEnvironments()` ✅
+- E#6 JSON tfvars — `jq`-based generation replacing heredoc+sed ✅
+- E#7 Store tfvars in S3 — destroy downloads exact inputs, no reconstruction ✅
+- E#8 Extract setup into reusable workflow — `preview-setup.yml` ✅
+- E#9 Consistent `idp-` prefix — all modules standardized ✅
+- E#10 Single TEMPLATES source of truth — `cli/src/lib/templates.ts` ✅
+- E#11 Cleaner dashboard diff detection — temp file comparison ✅
+
 ### Remaining
 - #2 GitHub PAT in plain text — use OS credential store
 - #3 Extend command metadata — partially fixed (computes total lifetime, but still writes `ttl` field)

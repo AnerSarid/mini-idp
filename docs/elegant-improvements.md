@@ -308,18 +308,23 @@ More lines, but each line does one thing and the intent is obvious.
 
 ## Summary
 
-| # | What | Effort | Impact |
-|---|------|--------|--------|
-| 1 | De-duplicate template boilerplate (symlinks or base module) | Medium | Prevents drift as templates grow |
-| 2 | Extract shared `prompt()` utility | 10 min | Trivial DRY win |
-| 3 | Command error-handling wrapper | 20 min | Reduces noise in 8 files |
-| 4 | Singleton S3/DynamoDB clients | 10 min | Proper SDK usage |
-| 5 | Parallel S3 fetches in `listEnvironments` | 15 min | Noticeably faster CLI |
-| 6 | JSON tfvars instead of heredoc + sed | 1 hour | Eliminates the most fragile code path |
-| 7 | Store tfvars in S3 (or default all destroy vars) | 30 min | Eliminates 60 lines of reconstruction |
-| 8 | Extract setup into reusable workflow | 1 hour | Cleaner consumer-facing contract |
-| 9 | Consistent `idp-` prefix across modules | 30 min | IAM + observability consistency |
-| 10 | Single `TEMPLATES` source of truth | 15 min | One place to update |
-| 11 | Cleaner dashboard diff detection | 15 min | Less brittle CI |
+All 11 improvements have been implemented and tested end-to-end (provision + destroy cycle).
 
-None of these are blocking. The project works. These are the kinds of refinements that make the difference between "this works" and "this is obviously right" — the kind of code where a new team member reads it and doesn't need to ask why.
+| # | What | Status | Implementation |
+|---|------|--------|----------------|
+| 1 | De-duplicate template boilerplate | ✅ Done | `_base/` shared files copied at CI time; templates are 30-35 lines each |
+| 2 | Extract shared `prompt()` utility | ✅ Done | `cli/src/lib/prompt.ts` |
+| 3 | Command error-handling wrapper | ✅ Done | `withAuth()` in `cli/src/lib/command.ts` |
+| 4 | Singleton S3/DynamoDB clients | ✅ Done | Lazy singletons in `environments.ts` and `unlock.ts` |
+| 5 | Parallel S3 fetches in `listEnvironments` | ✅ Done | `Promise.allSettled()` with concurrent S3 requests |
+| 6 | JSON tfvars instead of heredoc + sed | ✅ Done | `jq`-based JSON assembly in `provision.yml` |
+| 7 | Store tfvars in S3 | ✅ Done | Provision uploads, destroy downloads — no reconstruction |
+| 8 | Extract setup into reusable workflow | ✅ Done | `preview-setup.yml` reusable workflow |
+| 9 | Consistent `idp-` prefix across modules | ✅ Done | All modules use `idp-${environment_name}` prefix |
+| 10 | Single `TEMPLATES` source of truth | ✅ Done | `cli/src/lib/templates.ts` — both commands import from it |
+| 11 | Cleaner dashboard diff detection | ✅ Done | Temp file comparison with timestamp stripping |
+
+### Bugs found and fixed during E2E testing
+- **`_base/variables.tf` collision**: CI `cp _base/*.tf template/` overwrote each template's own `variables.tf`. Fix: renamed to `shared-variables.tf`.
+- **ALB 32-char name limit**: Long environment names exceeded the AWS ALB/TG name limit. Fix: `name_prefix_short` truncated to 28 chars in `ecs-service` module.
+- **DynamoDB state digest**: Destroy cleaned S3 but not the DynamoDB `-md5` digest entry, causing "state data does not have expected content" on re-provision. Fix: added cleanup step to `destroy.yml`.

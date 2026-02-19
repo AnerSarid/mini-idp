@@ -1,6 +1,6 @@
 # Adding New Templates
 
-Templates are compositions of modules. To add a new golden path template:
+Templates are compositions of modules. Shared boilerplate (backend, provider, tags, networking, common module, shared variables) lives in `infrastructure/templates/_base/` and is automatically copied into each template directory at CI time. Your template only needs the unique parts.
 
 ## Steps
 
@@ -8,115 +8,82 @@ Templates are compositions of modules. To add a new golden path template:
 
 ```
 infrastructure/templates/my-new-template/
-├── main.tf        # Module composition
-├── variables.tf   # Input variables
+├── main.tf        # Template-specific module calls only
+├── variables.tf   # Template-specific variables only
 └── outputs.tf     # Outputs for the CLI
+```
+
+The `_base/` directory provides these shared files (copied in at CI time):
+```
+infrastructure/templates/_base/
+├── backend.tf              # terraform{} + provider + tags locals
+├── networking.tf           # module "networking" + shared VPC toggle + locals
+├── common.tf               # module "common" (IAM roles, CloudWatch logs)
+└── shared-variables.tf     # 13 shared variables (environment_name, owner, ttl, etc.)
 ```
 
 ### 2. Write main.tf
 
-Start with the Terraform block using partial backend configuration:
+Your `main.tf` only needs template-specific content. All shared infrastructure is handled by `_base/`:
 
 ```hcl
-terraform {
-  required_version = ">= 1.6.0"
-
-  # All backend values are provided via -backend-config flags from CI.
-  # For local use: tofu init -backend-config=../../backend.conf -backend-config="key=environments/<name>/terraform.tfstate"
-  backend "s3" {
-  }
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.aws_region
-
-  default_tags {
-    tags = local.tags
-  }
-}
+####################################################################
+# Template: My New Template
+# Provisions: (describe what this template creates)
+#
+# Shared infrastructure (backend, provider, tags, networking, common)
+# is provided by _base/*.tf — copied in at CI time.
+####################################################################
 
 locals {
-  tags = {
-    "idp:managed"      = "true"
-    "idp:environment"  = var.environment_name
-    "idp:template"     = "my-new-template"
-    "idp:owner"        = var.owner
-    "idp:created-at"   = var.created_at
-    "idp:ttl"          = var.ttl
-    "idp:expires-at"   = var.expires_at
-    "cost-center"      = "engineering"
-  }
+  template_name = "my-new-template"
+}
+
+# --- Template-specific modules ---
+module "ecs_service" {
+  source                 = "../../modules/ecs-service"
+  environment_name       = var.environment_name
+  vpc_id                 = local.vpc_id
+  public_subnet_ids      = local.public_subnet_ids
+  private_subnet_ids     = local.private_subnet_ids
+  task_execution_role_arn = module.common.task_execution_role_arn
+  task_role_arn          = module.common.task_role_arn
+  log_group_name         = module.common.log_group_name
+  container_image        = var.container_image
+  container_port         = var.container_port
+  cpu                    = var.cpu
+  memory                 = var.memory
+  acm_certificate_arn    = var.acm_certificate_arn
+  route53_zone_id        = var.route53_zone_id
+  dns_name               = var.preview_domain != "" ? "${var.environment_name}.${var.preview_domain}" : ""
+  aws_region             = var.aws_region
+  environment_variables  = var.environment_variables
+  secret_variables       = var.secret_variables
+  tags                   = local.tags
 }
 ```
 
-Then compose existing modules:
+The key points:
+- Set `template_name` in locals — this flows into the tag set computed by `_base/backend.tf`
+- Reference `local.vpc_id`, `local.public_subnet_ids`, `local.private_subnet_ids` — these are computed by `_base/networking.tf`
+- Reference `module.common.*` — this is set up by `_base/common.tf`
+- The `_base/` files handle backend config, provider, tags, networking (with shared VPC toggle), and the common module
+
+### 3. Define template-specific variables
+
+Shared variables (`environment_name`, `owner`, `ttl`, `created_at`, `expires_at`, `aws_region`, `cpu`, `memory`, `log_retention_days`, `environment_variables`, `secret_variables`, `use_shared_networking`, `state_bucket`) are provided by `_base/shared-variables.tf`. Your `variables.tf` only needs **template-specific** variables.
+
+**Important:** Variables with different defaults per template (like `container_image`) must go in your template's `variables.tf`, not in `_base/`.
+
+Example for an API-style template:
 
 ```hcl
-module "networking" {
-  source           = "../../modules/networking"
-  environment_name = var.environment_name
-  tags             = local.tags
-}
-
-module "common" {
-  source             = "../../modules/common"
-  environment_name   = var.environment_name
-  log_retention_days = var.log_retention_days
-  tags               = local.tags
-}
-
-# Add template-specific modules here
-```
-
-Every template **must** include:
-- An empty `backend "s3" {}` block (values come from `-backend-config` flags)
-- The `provider "aws"` block with `default_tags`
-- The `locals` block computing the standard tag set
-- The `networking` and `common` modules
-
-### 3. Define variables
-
-At minimum, every template needs these variables:
-
-```hcl
-variable "environment_name" {
-  description = "Name of the environment"
-  type        = string
-}
-
-variable "owner" {
-  description = "Owner email"
-  type        = string
-}
-
-variable "ttl" {
-  description = "Time to live (e.g. 7d)"
-  type        = string
-  default     = "7d"
-}
-
-variable "created_at" {
-  description = "Creation timestamp (ISO 8601)"
-  type        = string
-}
-
-variable "expires_at" {
-  description = "Expiration timestamp (ISO 8601)"
-  type        = string
-}
-
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-  default     = "us-east-1"
-}
+####################################################################
+# Template-specific variables for: my-new-template
+#
+# Shared variables (environment_name, owner, ttl, etc.) are in
+# _base/shared-variables.tf — copied in at CI time.
+####################################################################
 
 variable "container_image" {
   description = "Container image to deploy"
@@ -130,56 +97,26 @@ variable "container_port" {
   default     = 80
 }
 
-variable "cpu" {
-  description = "CPU units for the Fargate task (256, 512, 1024, 2048, 4096)"
-  type        = number
-  default     = 256
-}
-
-variable "memory" {
-  description = "Memory in MiB for the Fargate task"
-  type        = number
-  default     = 512
-}
-
-variable "log_retention_days" {
-  description = "CloudWatch log retention in days"
-  type        = number
-  default     = 3
-}
-
 variable "acm_certificate_arn" {
-  description = "ARN of an ACM certificate for HTTPS"
+  description = "ARN of an ACM certificate for HTTPS. Leave empty for HTTP-only."
   type        = string
   default     = ""
 }
 
 variable "route53_zone_id" {
-  description = "Route 53 hosted zone ID for DNS record"
+  description = "Route 53 hosted zone ID for DNS record. Leave empty to skip DNS."
   type        = string
   default     = ""
 }
 
 variable "preview_domain" {
-  description = "Base domain for preview environments"
+  description = "Base domain for preview environments (e.g. preview.yourdomain.com)."
   type        = string
   default     = ""
 }
-
-variable "environment_variables" {
-  description = "Plain environment variables for the container"
-  type        = map(string)
-  default     = {}
-}
-
-variable "secret_variables" {
-  description = "Secrets Manager ARN references for the container"
-  type        = map(string)
-  default     = {}
-}
 ```
 
-Add template-specific variables as needed (e.g. `schedule_expression` for scheduled-worker, `db_name` for api-database).
+See existing templates for examples: `api-service/variables.tf` (~37 lines), `scheduled-worker/variables.tf` (~25 lines).
 
 ### 4. Define outputs
 
@@ -223,9 +160,7 @@ If your template has unique variables, add conditional tfvars generation in the 
 
 ### 7. Update the CLI
 
-In `cli/src/commands/create.ts`, add to the `TEMPLATES` array and `COST_ESTIMATES`.
-
-In `cli/src/commands/templates.ts`, add the template description.
+In `cli/src/lib/templates.ts`, add to the `TEMPLATES` array (single source of truth for template names, descriptions, and cost estimates). Both the `create` and `templates` commands import from this shared module.
 
 ### 8. Test locally
 
@@ -241,4 +176,6 @@ tofu plan -var="environment_name=test-my-template" \
 
 ## Cross-Repo Considerations
 
-When consumers call `provision.yml` cross-repo, the workflow checks out the mini-idp repository to access template code. Your new template will be available to all consumer repos as soon as it's merged to `main` in mini-idp. No changes needed in consumer repos unless the template requires new config fields in `.idp/config.yml`.
+When consumers call `provision.yml` cross-repo, the workflow checks out the mini-idp repository to access template code. The `_base/*.tf` files are copied into the template directory via `cp infrastructure/templates/_base/*.tf infrastructure/templates/{template}/` before `tofu init`. Your new template will be available to all consumer repos as soon as it's merged to `main` in mini-idp. No changes needed in consumer repos unless the template requires new config fields in `.idp/config.yml`.
+
+**Important:** The `_base/` file `shared-variables.tf` is intentionally not named `variables.tf` — this avoids overwriting the template's own `variables.tf` during the CI copy step.

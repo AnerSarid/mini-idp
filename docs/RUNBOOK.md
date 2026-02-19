@@ -260,6 +260,20 @@ aws dynamodb delete-item \
   --key '{"LockID": {"S": "YOUR-STATE-BUCKET/environments/ENV_NAME/terraform.tfstate"}}'
 ```
 
+### DynamoDB state digest mismatch
+
+If re-provisioning fails with "state data in S3 does not have the expected content," the DynamoDB `-md5` digest entry from a previous environment is stale. The destroy workflow normally cleans this up, but if a destroy was run before this cleanup step was added, the digest may persist.
+
+**Fix:**
+
+```bash
+aws dynamodb delete-item \
+  --table-name YOUR-LOCK-TABLE \
+  --key '{"LockID": {"S": "YOUR-STATE-BUCKET/environments/ENV_NAME/terraform.tfstate-md5"}}'
+```
+
+Then re-run the provision.
+
 ### Environment stuck in "destroying" status
 
 The TTL cleanup marks environments as "destroying" before triggering the workflow. If the destroy fails:

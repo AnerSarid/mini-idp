@@ -37,7 +37,7 @@ Reusable workflows (provision.yml / destroy.yml)
         ↓
 OpenTofu → AWS (VPC, ECS, ALB, RDS, Route 53, ACM, Secrets Manager)
         ↓
-S3 (state + metadata + outputs)
+S3 (state + metadata + tfvars + outputs)
 ```
 
 - **GitOps**: Automatic preview environments tied to branch lifecycle
@@ -212,6 +212,7 @@ s3_bucket_arn: "arn:aws:s3:::my-bucket"
 mini-idp/
 ├── .github/workflows/
 │   ├── preview-env.yml        # GitOps: branch push/delete triggers
+│   ├── preview-setup.yml      # Reusable: branch name + config parsing
 │   ├── provision.yml          # Reusable: tofu plan + apply
 │   ├── destroy.yml            # Reusable: tofu destroy + cleanup
 │   ├── ttl-cleanup.yml        # Scheduled: destroy expired environments
@@ -225,6 +226,7 @@ mini-idp/
 │   │   ├── scheduled-task/    # ECS scheduled task + EventBridge
 │   │   └── common/            # IAM roles, CloudWatch logs, Secrets Manager
 │   ├── templates/             # Golden path infrastructure templates
+│   │   ├── _base/             # Shared Terraform files (backend, networking, common)
 │   │   ├── api-service/       # VPC + ECS + ALB + HTTPS
 │   │   ├── api-database/      # Above + RDS PostgreSQL
 │   │   └── scheduled-worker/  # VPC + ECS Scheduled Task

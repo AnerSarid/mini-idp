@@ -41,12 +41,12 @@ Consumer repos reference mini-idp's reusable workflows without duplicating infra
 Consumer repo (e.g. mini-idp-demo-app)          mini-idp (platform repo)
 ┌─────────────────────────────────┐    ┌──────────────────────────────────┐
 │ .github/workflows/              │    │ .github/workflows/               │
-│   preview-env.yml               │    │   provision.yml  (workflow_call) │
-│     - setup (branch name, config)│───→│   destroy.yml    (workflow_call) │
-│     - build-image (ECR push)    │    │   update-dashboard.yml           │
-│     - provision/extend/destroy  │    │                                  │
+│   preview-env.yml               │    │   preview-setup.yml              │
+│     - setup ─────────────────────│───→│   provision.yml  (workflow_call) │
+│     - build-image (ECR push)    │    │   destroy.yml    (workflow_call) │
+│     - provision/extend/destroy  │    │   update-dashboard.yml           │
 │                                 │    │ infrastructure/                  │
-│ .idp/config.yml                 │    │   templates/                     │
+│ .idp/config.yml                 │    │   templates/_base/ + per-type/   │
 │ Dockerfile                      │    │   modules/                       │
 │ (application code)              │    │   shared/                        │
 └─────────────────────────────────┘    └──────────────────────────────────┘
@@ -55,7 +55,7 @@ Consumer repo (e.g. mini-idp-demo-app)          mini-idp (platform repo)
 **Key design decisions:**
 
 - `preview-env.yml` must live in each consumer repo because it triggers on `push`/`delete`/`pull_request` events and needs to checkout the consumer's code (for Dockerfile and config).
-- `provision.yml`, `destroy.yml`, and `update-dashboard.yml` are reusable workflows (`on: workflow_call`) that live in mini-idp and are called cross-repo via absolute refs: `uses: YOUR-ORG/mini-idp/.github/workflows/provision.yml@main`.
+- `preview-setup.yml`, `provision.yml`, `destroy.yml`, and `update-dashboard.yml` are reusable workflows (`on: workflow_call`) that live in mini-idp and are called cross-repo via absolute refs: `uses: YOUR-ORG/mini-idp/.github/workflows/provision.yml@main`.
 - When a reusable workflow runs cross-repo, `actions/checkout@v4` defaults to the **caller's** repo. The reusable workflows explicitly checkout `repository: YOUR-ORG/mini-idp` to access Terraform templates.
 - `${{ vars.* }}` in reusable workflows resolve to the **called** workflow's repository variables (mini-idp), which is the correct behavior for platform-level configuration.
 
@@ -79,9 +79,10 @@ Consumer repo (e.g. mini-idp-demo-app)          mini-idp (platform repo)
 ```
 1. Developer runs `idp destroy foo` or deletes the feature branch
 2. Workflow reads metadata.json from S3 to determine template
-3. Runs `tofu init` with same -backend-config flags
-4. Runs `tofu destroy` against the correct template
-5. Cleans up: S3 artifacts, ECR images tagged with environment prefix, DynamoDB locks
+3. Downloads the stored tfvars.json from S3 (exact inputs used to create the env)
+4. Runs `tofu init` with same -backend-config flags
+5. Runs `tofu destroy -var-file=tfvars.json` against the correct template
+6. Cleans up: S3 artifacts (state + metadata + tfvars), ECR images, DynamoDB digest entry
 ```
 
 ### TTL Cleanup
@@ -142,13 +143,14 @@ Each environment gets its own Terraform state file at:
 s3://{STATE_BUCKET}/environments/{name}/terraform.tfstate
 ```
 
-Environment metadata and outputs are stored alongside:
+Environment metadata, tfvars, and outputs are stored alongside:
 ```
 s3://{STATE_BUCKET}/environments/{name}/metadata.json
+s3://{STATE_BUCKET}/environments/{name}/tfvars.json
 s3://{STATE_BUCKET}/environments/{name}/outputs.json
 ```
 
-DynamoDB provides state locking to prevent concurrent modifications.
+DynamoDB provides state locking to prevent concurrent modifications. A `-md5` digest entry is stored alongside each lock for state integrity verification — this is cleaned up on destroy.
 
 ### Parameterized Backend
 
@@ -182,24 +184,26 @@ An optional Docker Hub pull-through cache avoids rate limits during concurrent b
 
 ## Module Composition
 
-Templates compose reusable modules:
+Templates compose reusable modules. Shared boilerplate (backend config, provider, tags, networking, common module, shared variables) lives in `infrastructure/templates/_base/` and is copied into each template directory at CI time. Each template's `main.tf` contains only the template-specific module calls.
 
 ```
-api-service      = networking + common + ecs-service
-api-database     = networking + common + ecs-service + rds-postgres
-scheduled-worker = networking + common + scheduled-task
+_base/             = backend.tf + networking.tf + common.tf + shared-variables.tf
+api-service      = _base + ecs-service      (+ template-specific variables.tf)
+api-database     = _base + ecs-service + rds-postgres
+scheduled-worker = _base + scheduled-task
 ```
 
-Each module is independently testable and versioned. Adding a new template means composing existing modules in a new combination. See [ADDING_TEMPLATES.md](ADDING_TEMPLATES.md).
+Each module is independently testable and versioned. Adding a new template means writing a slim `main.tf` that wires existing modules together — the `_base/` files provide all the shared infrastructure. See [ADDING_TEMPLATES.md](ADDING_TEMPLATES.md).
 
 ## Workflow Composition
 
 ```
 preview-env.yml (GitOps automation — lives in consumer repo)
-  ├── calls provision.yml (for new environments)          ← cross-repo
-  ├── calls provision.yml (for extend + redeploy)         ← cross-repo
-  ├── calls destroy.yml (on branch delete / PR merge)     ← cross-repo
-  └── calls update-dashboard.yml (after any change)       ← cross-repo
+  ├── calls preview-setup.yml (branch name + config parsing) ← cross-repo
+  ├── calls provision.yml (for new environments)             ← cross-repo
+  ├── calls provision.yml (for extend + redeploy)            ← cross-repo
+  ├── calls destroy.yml (on branch delete / PR merge)        ← cross-repo
+  └── calls update-dashboard.yml (after any change)          ← cross-repo
 
 CLI (manual / scripted use)
   ├── triggers provision.yml via workflow_dispatch
@@ -215,13 +219,15 @@ Both `provision.yml` and `destroy.yml` support two trigger types:
 
 ## Networking
 
-Each environment gets its own VPC with:
+By default, each environment gets its own VPC with:
 - 2 public subnets (ALB) across 2 AZs
 - 2 private subnets (ECS, RDS) across 2 AZs
 - 1 NAT gateway (cost-optimized, not HA)
 - Internet gateway for public subnets
 
 This provides full network isolation between environments.
+
+Optionally, environments can use a shared VPC (`use_shared_networking: true` in config or `USE_SHARED_NETWORKING` repo variable). This skips per-environment VPC/NAT/IGW creation and looks up a pre-deployed shared VPC via `terraform_remote_state`, reducing provision time from ~4 minutes to ~90 seconds and eliminating per-environment NAT costs (~$1.10/day each).
 
 ## Security Model
 
